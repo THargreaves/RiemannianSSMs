@@ -1,5 +1,10 @@
 module RiemannianSSMs
 
-# Write your package code here.
+using LinearAlgebra
+using Random
+using StaticArrays
+
+include("block_types.jl")
+include("linalg.jl")
 
 end
