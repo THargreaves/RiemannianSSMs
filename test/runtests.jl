@@ -155,6 +155,33 @@ end
     @test maximum(abs.(A_inv .- A_inv_dense)) < 1e-10
 end
 
+@testitem "Hamiltonian" begin
+    using RiemannianSSMs
+    using LinearAlgebra
+    using StableRNGs
+    using StaticArrays
+
+    D = 3
+    K = 5
+    N = D * K
+    rng = StableRNG(1234)
+
+    G = rand(rng, SymPSDBlockTridiag{Float64,D}, K)
+    θs = BlockVector([rand(rng, SVector{D,Float64}) for k in 1:K])
+    ps = BlockVector([rand(rng, SVector{D,Float64}) for k in 1:K])
+    ll = rand(rng)
+
+    H = RiemannianSSMs._calc_hamiltonian(θs, ps, ll, G)
+
+    G_dense = Matrix(G)
+    ps_dense = Vector(ps)
+    H_dense = (
+        -ll + 0.5 * (N * log(2π) + logdet(G_dense) + ps_dense' * inv(G_dense) * ps_dense)
+    )
+
+    @test abs(H - H_dense) < 1e-10
+end
+
 @testitem "∇θ_H" begin
     using RiemannianSSMs
     using LinearAlgebra

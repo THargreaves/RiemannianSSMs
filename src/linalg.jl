@@ -112,8 +112,7 @@ function block_tridiag_selected_inv(S::SymPSDBlockTridiag{T,D}) where {T,D}
     S_inv_diag = Vector{SMatrix{D,D,T,D^2}}(undef, K)
     S_inv_super = Vector{SMatrix{D,D,T,D^2}}(undef, K - 1)
 
-    # @inbounds begin
-    begin
+    @inbounds begin
         # Forward elimination
         S_forward = Vector{SMatrix{D,D,T,D^2}}(undef, K)
         S_forward[1] = zeros(SMatrix{D,D,T,D^2})
@@ -152,4 +151,44 @@ function block_tridiag_selected_inv(S::SymPSDBlockTridiag{T,D}) where {T,D}
     end
 
     return SymPSDBlockTridiag{T,D}(S_inv_diag, S_inv_super)
+end
+
+# Vector-vector operations
+for op in (:+, :-)
+    @eval function Base.$(op)(x::BlockVector{T,D}, y::BlockVector{T,D}) where {T,D}
+        K = length(x.blocks)
+        @assert K == length(y.blocks)
+
+        z_blocks = Vector{SVector{D,T}}(undef, K)
+        @inbounds for k in 1:K
+            z_blocks[k] = x.blocks[k]$(op)y.blocks[k]
+        end
+
+        return BlockVector{T,D}(z_blocks)
+    end
+end
+
+# Vector-scalar operations
+for op in (:+, :-, :*, :/)
+    @eval function Base.$(op)(x::BlockVector{T,D}, a::T) where {T,D}
+        K = length(x.blocks)
+
+        z_blocks = Vector{SVector{D,T}}(undef, K)
+        @inbounds for k in 1:K
+            z_blocks[k] = x.blocks[k]$(op)a
+        end
+
+        return BlockVector{T,D}(z_blocks)
+    end
+
+    @eval function Base.$(op)(a::T, x::BlockVector{T,D}) where {T,D}
+        K = length(x.blocks)
+
+        z_blocks = Vector{SVector{D,T}}(undef, K)
+        @inbounds for k in 1:K
+            z_blocks[k] = a$(op)x.blocks[k]
+        end
+
+        return BlockVector{T,D}(z_blocks)
+    end
 end
