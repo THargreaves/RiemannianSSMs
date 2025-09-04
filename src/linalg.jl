@@ -90,8 +90,18 @@ end
 # TODO: decide whether BlockUpperBidiag composes an UpperTriangular or _is_ one
 function Base.:\(F::Cholesky{T,<:BlockUpperBidiag{T,D}}, x::BlockVector{T,D}) where {T,D}
     y = F.U.data' \ x
-    z =  F.U.data \ y
+    z = F.U.data \ y
     return z
+end
+
+function LinearAlgebra.logdet(F::Cholesky{T,<:BlockUpperBidiag{T,D}}) where {T,D}
+    U_diag = F.U.data.diag_blocks
+    K = length(U_diag)
+    U_log_det = 0.0
+    @inbounds for k in 1:K
+        U_log_det += sum(log, diag(U_diag[k]))
+    end
+    return 2 * U_log_det
 end
 
 """

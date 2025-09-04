@@ -103,6 +103,27 @@ end
     @test maximum(abs.(y .- y_dense)) < 1e-10
 end
 
+@testitem "Logdet" begin
+    using RiemannianSSMs
+    using LinearAlgebra
+    using StableRNGs
+
+    D = 3
+    K = 5
+    rng = StableRNG(1234)
+
+    A = rand(rng, SymPSDBlockTridiag{Float64,D}, K)
+    F = cholesky(A)
+
+    log_det = logdet(F)
+
+    A_dense = Matrix(A)
+    F_dense = cholesky(A_dense)
+    log_det_dense = 2 * sum(logdet, diag(F_dense.U))
+
+    @test abs(log_det - log_det_dense) < 1e-10
+end
+
 @testitem "Selected inverse" begin
     using RiemannianSSMs
     using LinearAlgebra
