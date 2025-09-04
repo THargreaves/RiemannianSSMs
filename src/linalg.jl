@@ -87,6 +87,13 @@ function Base.:\(L::Adjoint{T,<:BlockUpperBidiag{T,D}}, x::BlockVector{T,D}) whe
     return BlockVector{T,D}(y_blocks)
 end
 
+# TODO: decide whether BlockUpperBidiag composes an UpperTriangular or _is_ one
+function Base.:\(F::Cholesky{T,<:BlockUpperBidiag{T,D}}, x::BlockVector{T,D}) where {T,D}
+    y = F.U.data' \ x
+    z =  F.U.data \ y
+    return z
+end
+
 """
 Compute the tridiagonal elements of the inverse of a symmetric PSD block tridiagonal matrix.
 """
