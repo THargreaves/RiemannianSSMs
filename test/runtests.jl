@@ -253,3 +253,55 @@ end
 
     @test maximum(abs.(∇p .- ∇p_dense)) < 1e-10
 end
+
+@testitem "Variable Restoring Force Dynamics Gradients" begin
+    using RiemannianSSMs
+    using FiniteDiff
+    using StableRNGs
+    using StaticArrays
+
+    rng = StableRNG(1234)
+    dyn = VariableRestoringForceDynamics{Float64}(rand(rng, 6)...)
+    z = @SVector rand(rng, 4)
+
+    Jf_analytical = calc_Jf(dyn, z)
+    Jf_numerical = FiniteDiff.finite_difference_jacobian(z -> f(dyn, z), z)
+
+    @test maximum(abs.(Jf_analytical .- Jf_numerical)) < 1e-7
+
+    Hfs_analytical = calc_Hfs(dyn, z)
+    Hfs_numerical = Vector{Matrix{Float64}}(undef, 4)
+    for i in 1:4
+        Hfs_numerical[i] = FiniteDiff.finite_difference_jacobian(
+            z -> calc_Jf(dyn, z)[:, i], z
+        )
+    end
+
+    @test all(maximum(abs.(Hfs_analytical[i] .- Hfs_numerical[i])) < 1e-7 for i in 1:4)
+end
+
+@testitem "Squared Landmark Distance Gradients" begin
+    using RiemannianSSMs
+    using FiniteDiff
+    using StableRNGs
+    using StaticArrays
+
+    rng = StableRNG(1234)
+    model = TwoLandmarkMeasurementModel{Float64}(rand(rng, 6)...)
+    z = @SVector rand(rng, 4)
+
+    Jh_analytical = calc_Jh(model, z)
+    Jh_numerical = FiniteDiff.finite_difference_jacobian(z -> h(model, z), z)
+
+    @test maximum(abs.(Jh_analytical .- Jh_numerical)) < 1e-7
+
+    Hhs_analytical = calc_Hhs(model, z)
+    Hhs_numerical = Vector{Matrix{Float64}}(undef, 4)
+    for i in 1:4
+        Hhs_numerical[i] = FiniteDiff.finite_difference_jacobian(
+            z -> calc_Jh(model, z)[:, i], z
+        )
+    end
+
+    @test all(maximum(abs.(Hhs_analytical[i] .- Hhs_numerical[i])) < 1e-7 for i in 1:4)
+end
