@@ -89,13 +89,13 @@ end
 
 # TODO: decide whether BlockUpperBidiag composes an UpperTriangular or _is_ one
 function Base.:\(F::Cholesky{T,<:BlockUpperBidiag{T,D}}, x::BlockVector{T,D}) where {T,D}
-    y = F.U.data' \ x
-    z = F.U.data \ y
+    y = F.factors' \ x
+    z = F.factors \ y
     return z
 end
 
 function LinearAlgebra.logdet(F::Cholesky{T,<:BlockUpperBidiag{T,D}}) where {T,D}
-    U_diag = F.U.data.diag_blocks
+    U_diag = F.factors.diag_blocks
     K = length(U_diag)
     U_log_det = 0.0
     @inbounds for k in 1:K
@@ -109,6 +109,7 @@ Compute the tridiagonal elements of the inverse of a symmetric PSD block tridiag
 """
 function block_tridiag_selected_inv(S::SymPSDBlockTridiag{T,D}) where {T,D}
     K = length(S.diag_blocks)
+    # TODO: should try to avoid allocations here
     S_inv_diag = Vector{SMatrix{D,D,T,D^2}}(undef, K)
     S_inv_super = Vector{SMatrix{D,D,T,D^2}}(undef, K - 1)
 
@@ -155,13 +156,13 @@ end
 
 # Vector-vector operations
 for op in (:+, :-)
-    @eval function Base.$(op)(x::BlockVector{T,D}, y::BlockVector{T,D}) where {T,D}
+    @eval function Base.$(op)(x::BlockVector{T,D}, y::BlockVector{T,D}) where {T<:Number,D}
         K = length(x.blocks)
         @assert K == length(y.blocks)
 
         z_blocks = Vector{SVector{D,T}}(undef, K)
         @inbounds for k in 1:K
-            z_blocks[k] = x.blocks[k]$(op)y.blocks[k]
+            z_blocks[k] = $op(x.blocks[k], y.blocks[k])
         end
 
         return BlockVector{T,D}(z_blocks)
@@ -170,25 +171,27 @@ end
 
 # Vector-scalar operations
 for op in (:+, :-, :*, :/)
-    @eval function Base.$(op)(x::BlockVector{T,D}, a::T) where {T,D}
+    @eval function Base.$(op)(x::BlockVector{T,D}, a::T) where {T<:Number,D}
         K = length(x.blocks)
 
         z_blocks = Vector{SVector{D,T}}(undef, K)
         @inbounds for k in 1:K
-            z_blocks[k] = x.blocks[k]$(op)a
+            z_blocks[k] = $op(x.blocks[k], a)
         end
 
         return BlockVector{T,D}(z_blocks)
     end
 
-    @eval function Base.$(op)(a::T, x::BlockVector{T,D}) where {T,D}
+    @eval function Base.$(op)(a::T, x::BlockVector{T,D}) where {T<:Number,D}
         K = length(x.blocks)
 
         z_blocks = Vector{SVector{D,T}}(undef, K)
         @inbounds for k in 1:K
-            z_blocks[k] = a$(op)x.blocks[k]
+            z_blocks[k] = $op(a, x.blocks[k])
         end
 
         return BlockVector{T,D}(z_blocks)
     end
 end
+
+Base.copy(x::BlockVector{T,D}) where {T,D} = BlockVector{T,D}(copy.(x.blocks))
