@@ -74,7 +74,7 @@ zs_true, ys = simulate(rng, ssm, K);
 
 zs_true = BlockVector{Float64,4}(zs_true)
 
-lf_params = LeapfrogParams{Float64}(0.01, 1e-6, 1000)
+lf_params = LeapfrogParams{Float64}(0.05, 1e-6, 1000)
 
 N_samples = 10000
 N_burnin = 0
@@ -158,18 +158,18 @@ plot!(
 scatter!(p1, [a1, a2], [b1, b2]; label="Sensors", color=:red, ms=8, marker=:star5)
 display(p1)
 
-@profview sample!(
-    zs_samples,
-    rng,
-    ssm,
-    z_init,
-    ys,
-    N_samples,
-    N_burnin,
-    n_steps,
-    lf_params;
-    progress=false,
-)
+# @profview sample!(
+#     zs_samples,
+#     rng,
+#     ssm,
+#     z_init,
+#     ys,
+#     N_samples,
+#     N_burnin,
+#     n_steps,
+#     lf_params;
+#     progress=false,
+# )
 
 # Plot 2D density of some middle time velocity
 K_test = K ÷ 2
