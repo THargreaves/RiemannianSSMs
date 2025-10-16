@@ -29,6 +29,15 @@ function h(model::TwoLandmarkMeasurementModel{T}, z::SVector{4,T}) where {T}
     return @SVector [h1, h2]
 end
 
+# AbstractVector version
+function h(model::TwoLandmarkMeasurementModel, z::AbstractVector)
+    x, y, vx, vy = z
+    a1, b1, a2, b2 = model.a1, model.b1, model.a2, model.b2
+    h1 = (x - a1)^2 + (y - b1)^2
+    h2 = (x - a2)^2 + (y - b2)^2
+    return [h1, h2]
+end
+
 function calc_Jh(model::TwoLandmarkMeasurementModel{T}, z::SVector{4,T}) where {T}
     x, y, vx, vy = z
     a1, b1, a2, b2 = model.a1, model.b1, model.a2, model.b2

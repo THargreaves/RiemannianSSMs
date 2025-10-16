@@ -41,7 +41,21 @@ function f(dyn::VariableRestoringForceDynamics{T}, z::SVector{4,T}) where {T}
     return @SVector [new_x, new_y, new_vx, new_vy]
 end
 
-function calc_Jf(dyn::VariableRestoringForceDynamics{T}, z::SVector{4, T}) where {T}
+# AbstractVector version
+function f(dyn::VariableRestoringForceDynamics, z::AbstractVector)
+    x, y, vx, vy = z
+    α, β, γ, δt = dyn.α, dyn.β, dyn.γ, dyn.δt
+    new_x = x + δt * vx
+    new_y = y + δt * vy
+    v_norm = sqrt(vx^2 + vy^2)
+    r = sqrt(x^2 + y^2)
+    rest_force = α * (1 + γ * r)
+    new_vx = vx * (1 - β * v_norm * δt) - rest_force * x * δt
+    new_vy = vy * (1 - β * v_norm * δt) - rest_force * y * δt
+    return [new_x, new_y, new_vx, new_vy]
+end
+
+function calc_Jf(dyn::VariableRestoringForceDynamics{T}, z::SVector{4,T}) where {T}
     x, y, vx, vy = z
     α, β, γ, δt = dyn.α, dyn.β, dyn.γ, dyn.δt
 
@@ -68,7 +82,7 @@ function calc_Jf(dyn::VariableRestoringForceDynamics{T}, z::SVector{4, T}) where
 end
 
 # TODO: take advantage of block sparsity
-function calc_Hfs(dyn::VariableRestoringForceDynamics, z::SVector{4, T}) where {T}
+function calc_Hfs(dyn::VariableRestoringForceDynamics, z::SVector{4,T}) where {T}
     x, y, vx, vy = z
     α, β, γ, δt = dyn.α, dyn.β, dyn.γ, dyn.δt
     r3 = (x^2 + y^2)^(3 / 2)
