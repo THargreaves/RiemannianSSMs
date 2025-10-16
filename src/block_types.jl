@@ -159,6 +159,17 @@ struct BlockVector{T,D} <: AbstractVector{T}
     blocks::Vector{SVector{D,T}}
 end
 
+# Convienence constructor from vector
+function BlockVector{T,D}(v::Vector{T}) where {T,D}
+    n = length(v)
+    if n % D != 0
+        throw(ArgumentError("Length of vector must be a multiple of block size D"))
+    end
+    K = div(n, D)
+    blocks = [SVector{D,T}(v[(D * (k - 1) + 1):(D * k)]) for k in 1:K]
+    return BlockVector{T,D}(blocks)
+end
+
 block_dim(::BlockVector{T,D}) where {T,D} = D
 
 function Base.size(v::BlockVector)
