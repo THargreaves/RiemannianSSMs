@@ -119,10 +119,11 @@ function p_half_step(
     end
 
     if reps == lf_params.max_reps
-        @warn "Failed to converge in $(lf_params.max_reps) repetitions."
+        # @warn "Failed to converge in $(lf_params.max_reps) repetitions."
+        return ps, true
     end
 
-    return ps_new_2
+    return ps_new_2, false
 end
 
 function θ_step(
@@ -142,19 +143,23 @@ function θ_step(
     end
 
     if reps == lf_params.max_reps
-        @warn "Failed to converge in $(lf_params.max_reps) repetitions."
+        # @warn "Failed to converge in $(lf_params.max_reps) repetitions."
+        return θs, true
     end
 
-    return θs_new_2
+    return θs_new_2, false
 end
 
 function glf_step(
     θs::BlockVector{T,D}, ps::BlockVector{T,D}, ys, ssm, lf_params::LeapfrogParams{T}
 ) where {T,D}
-    ps = p_half_step(θs, ps, ys, ssm, lf_params)
-    θs = θ_step(θs, ps, ssm, lf_params)
-    ps = p_half_step(θs, ps, ys, ssm, lf_params)
-    return θs, ps
+    ps, diverged = p_half_step(θs, ps, ys, ssm, lf_params)
+    diverged && return θs, ps, true
+    θs, diverged = θ_step(θs, ps, ssm, lf_params)
+    diverged && return θs, ps, true
+    ps, diverged = p_half_step(θs, ps, ys, ssm, lf_params)
+    diverged && return θs, ps, true
+    return θs, ps, false
 end
 
 function calc_ll(zs::BlockVector{T,D}, ys, ssm) where {T,D}
