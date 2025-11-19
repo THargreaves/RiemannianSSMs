@@ -1,5 +1,5 @@
 export LeapfrogParams, glf_step, calc_hamiltonian, ∇θ_H, ∇p_H
-export calc_dGs, calc_G
+export calc_dGs, calc_G, calc_ll, calc_ll_grad
 
 using Distributions
 
