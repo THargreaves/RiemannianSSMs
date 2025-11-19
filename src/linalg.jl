@@ -11,14 +11,14 @@ function LinearAlgebra.cholesky(S::SymPSDBlockTridiag{T,D}) where {T,D}
 
     # Perform in-place Cholesky decomposition
     @inbounds begin
-        U_diag[1] = cholesky(S.diag_blocks[1]).U
+        U_diag[1] = cholesky(Symmetric(S.diag_blocks[1])).U
         if K > 1
             U_supdiag[1] = U_diag[1]' \ S.super_blocks[1]
         end
 
         for k in 2:K
             # Schur complement update
-            S̄ = S.diag_blocks[k] - U_supdiag[k - 1]' * U_supdiag[k - 1]
+            S̄ = Symmetric(S.diag_blocks[k] - U_supdiag[k - 1]' * U_supdiag[k - 1])
             U_diag[k] = cholesky(S̄).U
             if k < K
                 U_supdiag[k] = U_diag[k]' \ S.super_blocks[k]
