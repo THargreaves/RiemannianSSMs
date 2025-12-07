@@ -85,8 +85,11 @@ end
 function calc_Hfs(dyn::VariableRestoringForceDynamics, z::SVector{4,T}) where {T}
     x, y, vx, vy = z
     α, β, γ, δt = dyn.α, dyn.β, dyn.γ, dyn.δt
-    r3 = (x^2 + y^2)^(3 / 2)
-    s3 = (vx^2 + vy^2)^(3 / 2)  # speed cubed
+    # Fast computation of ||x||^3
+    r2 = x^2 + y^2
+    s2 = vx^2 + vy^2
+    r3 = r2 * sqrt(r2)
+    s3 = s2 * sqrt(s2)
 
     # Jf_dx
     t11 = -α * γ * δt * x * (2x^2 + 3y^2) / r3
