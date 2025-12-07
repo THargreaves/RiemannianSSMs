@@ -157,8 +157,7 @@ function glf_step(
     diverged && return θs, ps, true
     θs, diverged = θ_step(θs, ps, ssm, lf_params)
     diverged && return θs, ps, true
-    ps, diverged = p_half_step(θs, ps, ys, ssm, lf_params)
-    diverged && return θs, ps, true
+    ps = ps - lf_params.ϵ / 2 * ∇θ_H(θs, ps, ys, ssm)
     return θs, ps, false
 end
 
