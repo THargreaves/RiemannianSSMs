@@ -1,18 +1,20 @@
 """Definitions of custom block matrix types backed by static arrays."""
 
 export SymPSDBlockTridiag, BlockUpperBidiag, BlockVector
+export to_block_vector, from_block_vector
 
-struct SymPSDBlockTridiag{T,D,L} <: AbstractMatrix{T}
-    diag_blocks::Vector{SMatrix{D,D,T,L}}
-    super_blocks::Vector{SMatrix{D,D,T,L}}
+struct SymPSDBlockTridiag{T,D,L,V<:AbstractVector{SMatrix{D,D,T,L}}} <: AbstractMatrix{T}
+    diag_blocks::V
+    super_blocks::V
 
-    function SymPSDBlockTridiag{T,D}(diag_blocks, super_blocks) where {T,D}
-        L = D^2
+    function SymPSDBlockTridiag{T,D}(
+        diag_blocks::V, super_blocks::V
+    ) where {T,D,L,V<:AbstractVector{SMatrix{D,D,T,L}}}
         if length(diag_blocks) != length(super_blocks) + 1
             throw(ArgumentError("Number of diagonal blocks must be one more than number \
                                  of super-diagonal blocks"))
         end
-        return new{T,D,L}(diag_blocks, super_blocks)
+        return new{T,D,L,V}(diag_blocks, super_blocks)
     end
 end
 
@@ -92,17 +94,30 @@ function Base.show(io::IO, ::MIME"text/plain", A::SymPSDBlockTridiag)
     )
 end
 
-struct BlockUpperBidiag{T,D,L} <: AbstractMatrix{T}
-    diag_blocks::Vector{UpperTriangular{T,SMatrix{D,D,T,L}}}
-    super_blocks::Vector{SMatrix{D,D,T,L}}
+struct BlockUpperBidiag{
+    T,
+    D,
+    L,
+    V1<:AbstractVector{UpperTriangular{T,SMatrix{D,D,T,L}}},
+    V2<:AbstractVector{SMatrix{D,D,T,L}},
+} <: AbstractMatrix{T}
+    diag_blocks::V1
+    super_blocks::V2
 
-    function BlockUpperBidiag{T,D}(diag_blocks, super_blocks) where {T,D}
-        L = D^2
+    function BlockUpperBidiag{T,D}(
+        diag_blocks::V1, super_blocks::V2
+    ) where {
+        T,
+        D,
+        L,
+        V1<:AbstractVector{UpperTriangular{T,SMatrix{D,D,T,L}}},
+        V2<:AbstractVector{SMatrix{D,D,T,L}},
+    }
         if length(diag_blocks) != length(super_blocks) + 1
             throw(ArgumentError("Number of diagonal blocks must be one more than number \
                                  of super-diagonal blocks"))
         end
-        return new{T,D,L}(diag_blocks, super_blocks)
+        return new{T,D,L,V1,V2}(diag_blocks, super_blocks)
     end
 end
 
@@ -155,8 +170,8 @@ function Base.show(io::IO, ::MIME"text/plain", A::BlockUpperBidiag)
     )
 end
 
-struct BlockVector{T,D} <: AbstractVector{T}
-    blocks::Vector{SVector{D,T}}
+struct BlockVector{T,D,V<:AbstractVector{SVector{D,T}}} <: AbstractVector{T}
+    blocks::V
 end
 
 # Convienence constructor from vector
@@ -168,6 +183,11 @@ function BlockVector{T,D}(v::Vector{T}) where {T,D}
     K = div(n, D)
     blocks = [SVector{D,T}(v[(D * (k - 1) + 1):(D * k)]) for k in 1:K]
     return BlockVector{T,D}(blocks)
+end
+
+# Regular constructor
+function BlockVector{T,D}(blocks::V) where {T,D,V<:AbstractVector{SVector{D,T}}}
+    return BlockVector{T,D,V}(blocks)
 end
 
 block_dim(::BlockVector{T,D}) where {T,D} = D
@@ -201,4 +221,24 @@ function Base.show(io::IO, ::MIME"text/plain", v::BlockVector)
     K = length(v.blocks)
     D = size(v.blocks[1], 1)
     return println(io, "BlockVector of length $(D*K) with $K blocks of size $D")
+end
+
+####################
+#### CONVERTERS ####
+####################
+
+"""Convert a standard vector to a BlockVector."""
+function to_block_vector(x::AbstractVector{T}, ::Val{D}) where {T,D}
+    blocks = reinterpret(SVector{D,T}, x)
+    return BlockVector{T,D}(blocks)
+end
+
+"""Convert a BlockVector to a standard vector."""
+function from_block_vector(x_blocks::BlockVector{T,D}) where {T,D}
+    K = length(x_blocks.blocks)
+    x = Vector{T}(undef, K * D)
+    @inbounds for k in 1:K
+        x[(k - 1) * D .+ (1:D)] .= x_blocks.blocks[k]
+    end
+    return x
 end

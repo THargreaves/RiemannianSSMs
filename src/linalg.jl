@@ -29,6 +29,32 @@ function LinearAlgebra.cholesky(S::SymPSDBlockTridiag{T,D}) where {T,D}
     return Cholesky(BlockUpperBidiag{T,D}(U_diag, U_supdiag), 'U', 0)
 end
 
+function LinearAlgebra.cholesky!(S::SymPSDBlockTridiag{T,D}) where {T,D}
+    K = length(S.diag_blocks)
+
+    U_diag = reinterpret(UpperTriangular{T,SMatrix{D,D,T,D^2}}, S.diag_blocks)
+    U_supdiag = S.super_blocks
+
+    # Perform in-place Cholesky decomposition
+    @inbounds begin
+        U_diag[1] = cholesky(Symmetric(S.diag_blocks[1])).U
+        if K > 1
+            U_supdiag[1] = U_diag[1]' \ S.super_blocks[1]
+        end
+
+        for k in 2:K
+            # Schur complement update
+            S̄ = Symmetric(S.diag_blocks[k] - U_supdiag[k - 1]' * U_supdiag[k - 1])
+            U_diag[k] = cholesky(S̄).U
+            if k < K
+                U_supdiag[k] = U_diag[k]' \ S.super_blocks[k]
+            end
+        end
+    end
+
+    return Cholesky(BlockUpperBidiag{T,D}(U_diag, U_supdiag), 'U', 0)
+end
+
 function Base.:*(L::Adjoint{T,<:BlockUpperBidiag{T,D}}, x::BlockVector{T,D}) where {T,D}
     U_diag = L.parent.diag_blocks
     U_supdiag = L.parent.super_blocks
