@@ -104,6 +104,57 @@ function LinearAlgebra.logdet(F::Cholesky{T,<:BlockUpperBidiag{T,D}}) where {T,D
     return 2 * U_log_det
 end
 
+###########################
+#### IN-PLACE VARIANTS ####
+###########################
+
+# Upper backward solve
+function LinearAlgebra.ldiv!(U::BlockUpperBidiag{T,D}, x::BlockVector{T,D}) where {T,D}
+    U_diag = U.diag_blocks
+    U_supdiag = U.super_blocks
+    x_blocks = x.blocks
+    K = length(U_diag)
+
+    @inbounds begin
+        x_blocks[K] = U_diag[K] \ x_blocks[K]
+        for i in (K - 1):-1:1
+            x_blocks[i] -= U_supdiag[i] * x_blocks[i + 1]
+            x_blocks[i] = U_diag[i] \ x_blocks[i]
+        end
+    end
+
+    return x
+end
+
+# Lower forward solve
+function LinearAlgebra.ldiv!(
+    L::Adjoint{T,<:BlockUpperBidiag{T,D}}, x::BlockVector{T,D}
+) where {T,D}
+    U_diag = L.parent.diag_blocks
+    U_supdiag = L.parent.super_blocks
+    x_blocks = x.blocks
+    K = length(U_diag)
+
+    @inbounds begin
+        x_blocks[1] = U_diag[1]' \ x_blocks[1]
+        for i in 2:K
+            x_blocks[i] -= U_supdiag[i - 1]' * x_blocks[i - 1]
+            x_blocks[i] = U_diag[i]' \ x_blocks[i]
+        end
+    end
+
+    return x
+end
+
+# Cholesky solve
+function LinearAlgebra.ldiv!(
+    F::Cholesky{T,<:BlockUpperBidiag{T,D}}, x::BlockVector{T,D}
+) where {T,D}
+    ldiv!(F.factors', x)
+    ldiv!(F.factors, x)
+    return x
+end
+
 """
 Compute the tridiagonal elements of the inverse of a symmetric PSD block tridiagonal matrix.
 """
