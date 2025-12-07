@@ -38,10 +38,11 @@ prior = MvNormal(μ0, Σ0)
 
 dyn = VariableRestoringForceDynamics(α, β, γ, σ_p, σ_v, δt)
 
-a1, b1 = -5.0, 0.0
-a2, b2 = 5.0, 0.0
-σ1 = 0.5
-σ2 = 0.5
+# Move these away from trajectory to resolve numerical stability issues
+a1, b1 = -1.0, -3.0
+a2, b2 = 5.0, -1.5
+σ1 = 1.5
+σ2 = 1.5
 
 obs = TwoLandmarkMeasurementModel(a1, b1, a2, b2, σ1, σ2)
 
@@ -76,9 +77,15 @@ zs_true = BlockVector{Float64,4}(zs_true)
 
 lf_params = LeapfrogParams{Float64}(0.05, 1e-6, 1000)
 
-N_samples = 10000
+N_samples = 1000
 N_burnin = 0
-n_steps = 10
+n_steps = 50
+
+# lf_params = LeapfrogParams{Float64}(0.3, 1e-6, 1000)
+
+# N_samples = 1000
+# N_burnin = 0
+# n_steps = 10
 
 function sample!(
     zs_samples,
@@ -94,6 +101,7 @@ function sample!(
 )
     zs_curr = copy(z_init)
     n_accept = 0
+    n_divergent = 0
     K = length(ys)
 
     prog = Progress(N_samples; enabled=progress)
@@ -106,8 +114,20 @@ function sample!(
         zs_new = copy(zs_curr)
         ps_new = copy(ps_curr)
 
+        early_reject = false
         for _ in 1:n_steps
-            zs_new, ps_new = glf_step(zs_new, ps_new, ys, ssm, lf_params)
+            zs_new, ps_new, diverged = glf_step(zs_new, ps_new, ys, ssm, lf_params)
+            if diverged
+                early_reject = true
+                break
+            end
+        end
+
+        if early_reject
+            zs_samples[i] = copy(zs_curr)
+            n_divergent += 1
+            next!(prog)
+            continue
         end
 
         # Accept or reject
@@ -123,6 +143,7 @@ function sample!(
     end
 
     println("Finishing sampling with acceptance rate $(n_accept / N_samples)")
+    println("Proportion of divergent transitions: $(n_divergent / N_samples)")
 
     return zs_samples
 end
@@ -211,3 +232,142 @@ end
 rhmc_ess = ess(rhmc_samples)
 
 println("Average relative ESS per dimension for RHMC: $(mean(rhmc_ess) / N_samples)")
+println("Minimum relative ESS per dimension for RHMC: $(minimum(rhmc_ess) / N_samples)")
+println("Median relative ESS per dimension for RHMC: $(median(rhmc_ess) / N_samples)")
+
+# Plot distribution of ESS
+# ess_hist = histogram(
+#     rhmc_ess / N_samples;
+#     bins=30,
+#     xlabel="Relative ESS",
+#     ylabel="Frequency",
+#     title="Distribution of Relative ESS per Dimension for RHMC",
+# )
+# display(ess_hist)
+
+# Target from HMC:
+# Average relative ESS per dimension for NUTS: 0.2867662078072584
+# Minimum relative ESS per dimension for NUTS: 0.007676447908621659
+# Median relative ESS per dimension for NUTS: 0.20059827302050162
+
+# using AdvancedHMC, AbstractMCMC
+# using LogDensityProblems, LogDensityProblemsAD, ADTypes
+# using ForwardDiff
+# using DistributionsAD
+
+# struct LogTargetDensity{M,V}
+#     dim::Int
+#     ys::V
+#     ssm::M
+# end
+# function LogDensityProblems.logdensity(p::LogTargetDensity, θ)
+#     K = length(p.ys)
+
+#     @inbounds begin
+#         # Prior
+#         ll = logpdf(p.ssm.prior, θ[1:4])
+
+#         # Dynamics
+#         for k in 2:K
+#             ll += logpdf(
+#                 MvNormal(
+#                     f(p.ssm.dyn, θ[(4 * (k - 2) + 1):(4 * (k - 1))]), calc_Q(p.ssm.dyn)
+#                 ),
+#                 θ[(4 * (k - 1) + 1):(4 * k)],
+#             )
+#         end
+
+#         # Likelihood
+#         for k in 1:K
+#             ll += logpdf(
+#                 MvNormal(
+#                     h(p.ssm.sensor, θ[(4 * (k - 1) + 1):(4 * k)]), calc_R(p.ssm.sensor)
+#                 ),
+#                 p.ys[k],
+#             )
+#         end
+#     end
+
+#     return ll
+# end
+# LogDensityProblems.dimension(p::LogTargetDensity) = p.dim
+# function LogDensityProblems.capabilities(::Type{LogTargetDensity})
+#     return LogDensityProblems.LogDensityOrder{0}()
+# end
+
+# ℓπ = LogTargetDensity(4 * K, ys, ssm)
+# model = AdvancedHMC.LogDensityModel(LogDensityProblemsAD.ADgradient(AutoForwardDiff(), ℓπ))
+
+# sampler = HMCDA(0.8, sqrt(4 * K))
+# n_adapts, n_samples = 1000, 4000
+# initial_θ = reduce(vcat, zs_true)
+
+# samples = AbstractMCMC.sample(
+#     Random.default_rng(),
+#     model,
+#     sampler,
+#     n_adapts + n_samples;
+#     n_adapts=n_adapts,
+#     initial_params=initial_θ,
+#     progress=false, # Optional: Show a progress bar
+# );
+# nuts_samples = [s.z.θ for s in samples];
+
+# # Compute ESS
+# nuts_ess = ess(reshape(hcat(nuts_samples...)', :, 1, 4 * K))
+# println("Average relative ESS per dimension for NUTS: $(mean(nuts_ess) / n_samples)")
+# println("Minimum relative ESS per dimension for NUTS: $(minimum(nuts_ess) / n_samples)")
+# println("Median relative ESS per dimension for NUTS: $(median(nuts_ess) / n_samples)")
+
+# # Compare posterior means of velocities
+# rhmc_vx_mean = mean([zs_samples[i].blocks[K ÷ 2][3] for i in 1:N_samples])
+# rhmc_vy_mean = mean([zs_samples[i].blocks[K ÷ 2][4] for i in 1:N_samples])
+# nuts_vx_mean = mean([nuts_samples[i][4 * (K ÷ 2 - 1) + 3] for i in 1:n_samples])
+# nuts_vy_mean = mean([nuts_samples[i][4 * (K ÷ 2 - 1) + 4] for i in 1:n_samples])
+# println(
+#     "RHMC posterior mean velocity at t=$(K ÷ 2): (v_x, v_y) = ($rhmc_vx_mean, $rhmc_vy_mean)",
+# )
+# println(
+#     "NUTS posterior mean velocity at t=$(K ÷ 2): (v_x, v_y) = ($nuts_vx_mean, $nuts_vy_mean)",
+# )
+# # Compare to true velocity
+# true_vx = zs_true.blocks[K ÷ 2][3]
+# true_vy = zs_true.blocks[K ÷ 2][4]
+# println("True velocity at t=$(K ÷ 2): (v_x, v_y) = ($true_vx, $true_vy)")
+
+# Repeat multiple times to get better ESS estimate
+# REPS = 10
+# multiple_zs_samples = [Vector{BlockVector{Float64,4}}(undef, N_samples) for _ in 1:REPS]
+# for rep in 1:REPS
+#     println("Starting repetition $rep of $REPS")
+#     sample!(
+#         multiple_zs_samples[rep],
+#         rng,
+#         ssm,
+#         z_init,
+#         ys,
+#         N_samples,
+#         N_burnin,
+#         n_steps,
+#         lf_params;
+#         progress=true,
+#     )
+# end
+
+# combined_samples = Array{Float64,3}(undef, N_samples, REPS, 4 * K)
+# for rep in 1:REPS
+#     for i in 1:N_samples
+#         for k in 1:K
+#             for d in 1:4
+#                 combined_samples[i, rep, (k - 1) * 4 + d] = multiple_zs_samples[rep][i].blocks[k][d]
+#             end
+#         end
+#     end
+# end
+# rep_ess = ess(combined_samples)
+# println("Average relative ESS per dimension for RHMC: $(mean(rep_ess) / N_samples)")
+# println("Minimum relative ESS per dimension for RHMC: $(minimum(rep_ess) / N_samples)")
+# println("Median relative ESS per dimension for RHMC: $(median(rep_ess) / N_samples)")
+
+# median(ess(combined_samples; relative=true))
+# 1.8500090475757718
