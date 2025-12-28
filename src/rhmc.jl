@@ -26,10 +26,10 @@ function Base.show(io::IO, m::BlockTridiagonalRiemannianMetric{T,D}) where {T,D}
 end
 
 function calc_G(
-    metric::BlockTridiagonalRiemannianMetric{T,D}, θ::AbstractVector
+    metric::BlockTridiagonalRiemannianMetric{T,D}, θ::AbstractVector; λ=1e-7
 ) where {T,D}
     θ_blocks = to_block_vector(θ, Val(D))
-    return calc_G(θ_blocks, metric.ssm)
+    return calc_G(θ_blocks, metric.ssm; λ=λ)
 end
 
 function calc_G_fast(
@@ -228,7 +228,7 @@ function calc_ll_grad(zs::BlockVector{T,D}, ys, ssm) where {T,D}
     return BlockVector{T,D}(grads)
 end
 
-function calc_G(zs::BlockVector{T,D}, ssm) where {T,D}
+function calc_G(zs::BlockVector{T,D}, ssm; λ=1e-7) where {T,D}
     K = length(zs.blocks)
     # TODO: again, allocation is expensive. Should do in-place
     G = SymPSDBlockTridiag{T,D}(
@@ -249,7 +249,7 @@ function calc_G(zs::BlockVector{T,D}, ssm) where {T,D}
         end
 
         # Force to be positive definite
-        Λ = (Λ + Λ') / 2 + 1e-6 * I
+        Λ = (Λ + Λ') / 2 + λ * I
 
         G.diag_blocks[k] = Λ
     end
