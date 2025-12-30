@@ -610,3 +610,158 @@ function bordered_block_selected_inv(A::SymPSDBorderedBlockTridiag{T,D,P}) where
 
     return (A_inv_tridiag, W_blocks, S_inv)
 end
+
+########################################
+#### TRACE PRODUCT AND QUADRATIC FORM ##
+########################################
+
+export tr_product, quad_form
+
+"""
+Compute tr(G⁻¹ ∂G) where G is bordered block-tridiagonal and ∂G has full bordered structure.
+
+Arguments:
+- G_inv_parts: tuple (A_inv_tridiag, W_blocks, S_inv) from bordered_block_selected_inv
+- dG: SymPSDBorderedBlockTridiag representing ∂G/∂θ^{(p)}
+
+The full inverse has structure:
+    G⁻¹ = [ A_inv_tridiag           | -W S⁻¹  ]
+          [ -S⁻¹ W'                 |  S⁻¹    ]
+"""
+function tr_product(
+    G_inv_parts::Tuple{
+        SymPSDBlockTridiag{T,D},Vector{SMatrix{D,P,T,LDP}},SMatrix{P,P,T,LP}
+    },
+    dG::SymPSDBorderedBlockTridiag{T,D,P},
+) where {T,D,P,LDP,LP}
+    A_inv_tridiag, W_blocks, S_inv = G_inv_parts
+    K = length(A_inv_tridiag.diag_blocks)
+
+    tr_val = zero(T)
+
+    # Trace contribution from state-state blocks: tr(A_inv .* dG_xx)
+    @inbounds for k in 1:K
+        tr_val += sum(A_inv_tridiag.diag_blocks[k] .* dG.diag_blocks[k])
+    end
+    @inbounds for k in 1:(K - 1)
+        # Off-diagonal: need both (k, k+1) and (k+1, k) contributions
+        # Due to symmetry: tr(A_inv_super .* dG_super) + tr(A_inv_super' .* dG_super')
+        # = 2 * sum(A_inv_super .* dG_super) for symmetric matrices
+        tr_val += 2 * sum(A_inv_tridiag.super_blocks[k] .* dG.super_blocks[k])
+    end
+
+    # Trace contribution from border blocks: 2 * tr(-W S⁻¹ .* dG_xθ)
+    # The (x,θ) block of G⁻¹ is: -W_k S⁻¹ for row k
+    # Factor of 2 accounts for symmetric (θ,x) blocks
+    @inbounds for k in 1:K
+        G_inv_border_k = -W_blocks[k] * S_inv  # D×P matrix
+        tr_val += 2 * sum(G_inv_border_k .* dG.border_blocks[k])
+    end
+
+    # Trace contribution from corner block: tr(S⁻¹ .* dG_θθ)
+    tr_val += sum(S_inv .* dG.corner_block)
+
+    return tr_val
+end
+
+"""
+Compute tr(G⁻¹ ∂G) where ∂G is a sparse state derivative (BlockSparseStateDerivative).
+
+Only uses blocks at positions (k,k), (k,k+1), (k,θ), (k+1,θ), (θ,θ).
+"""
+function tr_product(
+    G_inv_parts::Tuple{
+        SymPSDBlockTridiag{T,D},Vector{SMatrix{D,P,T,LDP}},SMatrix{P,P,T,LP}
+    },
+    dG::BlockSparseStateDerivative{T,D,P},
+) where {T,D,P,LDP,LP}
+    A_inv_tridiag, W_blocks, S_inv = G_inv_parts
+    K = length(A_inv_tridiag.diag_blocks)
+    k = dG.k
+
+    tr_val = zero(T)
+
+    # Diagonal block (k,k)
+    tr_val += sum(A_inv_tridiag.diag_blocks[k] .* dG.diag_block)
+
+    # Off-diagonal block (k, k+1) - only if not at boundary
+    if k < K
+        tr_val += 2 * sum(A_inv_tridiag.super_blocks[k] .* dG.super_block)
+    end
+
+    # Border blocks (k,θ) and (k+1,θ)
+    G_inv_border_k = -W_blocks[k] * S_inv
+    tr_val += 2 * sum(G_inv_border_k .* dG.border_block_k)
+
+    if k < K
+        G_inv_border_k1 = -W_blocks[k + 1] * S_inv
+        tr_val += 2 * sum(G_inv_border_k1 .* dG.border_block_k1)
+    end
+
+    # Corner block (θ,θ)
+    tr_val += sum(S_inv .* dG.corner_block)
+
+    return tr_val
+end
+
+"""
+Compute the quadratic form v' * dG * v where dG is a bordered block-tridiagonal matrix.
+v is a BorderedBlockVector.
+"""
+function quad_form(
+    v::BorderedBlockVector{T,D,P}, dG::SymPSDBorderedBlockTridiag{T,D,P}
+) where {T,D,P}
+    K = length(v.state_blocks)
+    result = zero(T)
+
+    # State-state diagonal blocks
+    @inbounds for k in 1:K
+        result += v.state_blocks[k]' * dG.diag_blocks[k] * v.state_blocks[k]
+    end
+
+    # State-state off-diagonal blocks (both directions due to symmetry)
+    @inbounds for k in 1:(K - 1)
+        result += 2 * v.state_blocks[k]' * dG.super_blocks[k] * v.state_blocks[k + 1]
+    end
+
+    # Border blocks (x-θ cross terms, factor of 2 for symmetry)
+    @inbounds for k in 1:K
+        result += 2 * v.state_blocks[k]' * dG.border_blocks[k] * v.param_block
+    end
+
+    # Corner block (θ-θ)
+    result += v.param_block' * dG.corner_block * v.param_block
+
+    return result
+end
+
+"""
+Compute the quadratic form v' * dG * v where dG is a sparse state derivative.
+v is a BorderedBlockVector.
+"""
+function quad_form(
+    v::BorderedBlockVector{T,D,P}, dG::BlockSparseStateDerivative{T,D,P}
+) where {T,D,P}
+    K = length(v.state_blocks)
+    k = dG.k
+    result = zero(T)
+
+    # Diagonal block (k,k)
+    result += v.state_blocks[k]' * dG.diag_block * v.state_blocks[k]
+
+    # Off-diagonal block (k, k+1)
+    if k < K
+        result += 2 * v.state_blocks[k]' * dG.super_block * v.state_blocks[k + 1]
+    end
+
+    # Border blocks
+    result += 2 * v.state_blocks[k]' * dG.border_block_k * v.param_block
+    if k < K
+        result += 2 * v.state_blocks[k + 1]' * dG.border_block_k1 * v.param_block
+    end
+
+    # Corner block
+    result += v.param_block' * dG.corner_block * v.param_block
+
+    return result
+end
