@@ -559,6 +559,59 @@ function Base.show(io::IO, ::MIME"text/plain", v::BorderedBlockVector)
     )
 end
 
+##########################################
+#### SPARSE STATE DERIVATIVE MATRICES ####
+##########################################
+
+export BlockSparseStateDerivative
+
+"""
+Represents the sparse derivative ∂G/∂x_k^{(d)} for a bordered block-tridiagonal matrix.
+
+This derivative is sparse: only the following blocks are non-zero:
+- (k, k) diagonal block
+- (k, k+1) off-diagonal block (and symmetric (k+1, k))
+- (k, θ) border block (and symmetric)
+- (k+1, θ) border block (and symmetric)
+- (θ, θ) corner block
+
+For time index k at the boundary (k = K), the (k+1, *) blocks are treated as zeros.
+"""
+struct BlockSparseStateDerivative{T,D,P,LD,LP,LDP}
+    k::Int  # which state time index this derivative is w.r.t.
+    d::Int  # which dimension within the state block
+    diag_block::SMatrix{D,D,T,LD}           # ∂G_{k,k}/∂x_k^{(d)}
+    super_block::SMatrix{D,D,T,LD}          # ∂G_{k,k+1}/∂x_k^{(d)}
+    border_block_k::SMatrix{D,P,T,LDP}      # ∂G_{k,θ}/∂x_k^{(d)}
+    border_block_k1::SMatrix{D,P,T,LDP}     # ∂G_{k+1,θ}/∂x_k^{(d)}
+    corner_block::SMatrix{P,P,T,LP}         # ∂G_{θ,θ}/∂x_k^{(d)}
+end
+
+function BlockSparseStateDerivative{T,D,P}(
+    k::Int,
+    d::Int,
+    diag_block::SMatrix{D,D,T,LD},
+    super_block::SMatrix{D,D,T,LD},
+    border_block_k::SMatrix{D,P,T,LDP},
+    border_block_k1::SMatrix{D,P,T,LDP},
+    corner_block::SMatrix{P,P,T,LP},
+) where {T,D,P,LD,LP,LDP}
+    return BlockSparseStateDerivative{T,D,P,LD,LP,LDP}(
+        k, d, diag_block, super_block, border_block_k, border_block_k1, corner_block
+    )
+end
+
+block_dim(::BlockSparseStateDerivative{T,D}) where {T,D} = D
+param_dim(::BlockSparseStateDerivative{T,D,P}) where {T,D,P} = P
+
+function Base.show(
+    io::IO, ::MIME"text/plain", dG::BlockSparseStateDerivative{T,D,P}
+) where {T,D,P}
+    return println(
+        io, "BlockSparseStateDerivative for ∂G/∂x_$(dG.k)^{($(dG.d))} with D=$D, P=$P"
+    )
+end
+
 ####################
 #### CONVERTERS ####
 ####################
