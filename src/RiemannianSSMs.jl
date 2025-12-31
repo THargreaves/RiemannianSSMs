@@ -14,5 +14,7 @@ include("models/variable_restoring_force.jl")
 include("models/squared_landmark_distance.jl")
 include("models/variable_restoring_force_param.jl")
 include("models/squared_landmark_distance_param.jl")
+include("models/van_der_pol_param.jl")
+include("models/partial_linear_observation_param.jl")
 
 end
