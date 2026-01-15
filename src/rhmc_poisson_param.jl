@@ -3,8 +3,10 @@ RHMC infrastructure adapted for Poisson observations with state-dependent weight
 
 Key differences from Gaussian case:
 - Likelihood uses Poisson distribution instead of MvNormal
-- Weight matrix W_t = λ_t depends on both state and parameters
+- Weight matrix W_t = diag(λ_t) depends on both state and parameters
 - Metric derivatives must account for ∂W_t/∂x and ∂W_t/∂θ
+
+Supports both single-channel and multi-channel Poisson observations.
 """
 
 using AdvancedHMC
@@ -205,6 +207,7 @@ end
 """
 Calculate log-likelihood for Poisson SSM.
 
+Supports both single-channel and multi-channel Poisson observations.
 Uses Poisson(λ_t) distribution where λ_t = exp(η_t) and η_t = h_param(sensor, x_t, θ).
 """
 function calc_ll_param_poisson(
@@ -232,18 +235,22 @@ function calc_ll_param_poisson(
 
     # Poisson likelihood (only at observed time steps)
     if isnothing(obs_indices)
-        # Backward compatible: observations at every time step
         @inbounds for k in 1:K
-            η = h_param(ssm.sensor, z.state_blocks[k], θ)  # Linear predictor
-            λ = exp(η[1])  # Poisson rate
-            ll += logpdf(Poisson(λ), ys[k][1])  # y is 1-element SVector
+            η = h_param(ssm.sensor, z.state_blocks[k], θ)
+            λ = exp.(η)
+            y = ys[k]
+            for m in eachindex(λ)
+                ll += logpdf(Poisson(λ[m]), y[m])
+            end
         end
     else
-        # Sparse observations
         @inbounds for (obs_idx, k) in enumerate(obs_indices)
             η = h_param(ssm.sensor, z.state_blocks[k], θ)
-            λ = exp(η[1])
-            ll += logpdf(Poisson(λ), ys[obs_idx][1])
+            λ = exp.(η)
+            y = ys[obs_idx]
+            for m in eachindex(λ)
+                ll += logpdf(Poisson(λ[m]), y[m])
+            end
         end
     end
 
@@ -253,8 +260,8 @@ end
 """
 Calculate gradient of log-likelihood for Poisson SSM.
 
+Supports both single-channel and multi-channel Poisson observations.
 Poisson gradient: ∂ℓ/∂η = y - λ (since ∂log P/∂λ = (y-λ)/λ and ∂λ/∂η = λ cancel)
-Then ∂ℓ/∂z = (y - λ) · ∂η/∂z where η is the linear predictor.
 """
 function calc_ll_grad_param_poisson(
     z::BorderedBlockVector{T,D,P},
@@ -268,7 +275,7 @@ function calc_ll_grad_param_poisson(
     θ = z.param_block
 
     state_grads = Vector{SVector{D,T}}(undef, K)
-    param_grad = -prior_prec .* (θ - prior_mean)  # Parameter prior gradient
+    param_grad = -prior_prec .* (θ - prior_mean)
 
     Q_inv = calc_Qinv_param(ssm.dyn)
 
@@ -281,31 +288,24 @@ function calc_ll_grad_param_poisson(
 
     # Poisson observation term (only at observed time steps)
     if isnothing(obs_indices)
-        # Backward compatible: observations at every time step
         @inbounds for k in 1:K
-            η = h_param(ssm.sensor, z.state_blocks[k], θ)[1]
-            λ = exp(η)
-            y = ys[k][1]
+            η = h_param(ssm.sensor, z.state_blocks[k], θ)
+            λ = exp.(η)
+            y = ys[k]
+            gradient_term = y - λ  # M-vector
 
-            # Gradient term as 1-element SVector for proper matrix multiplication
-            gradient_term = @SVector [y - λ]
+            Jh = calc_Jh_param(ssm.sensor, z.state_blocks[k], θ)  # M×D
+            state_grads[k] += Jh' * gradient_term
 
-            # Gradient w.r.t. state: (y - λ) · ∂η/∂x
-            Jh = calc_Jh_param(ssm.sensor, z.state_blocks[k], θ)  # ∂η/∂x (1×2)
-            state_grads[k] += Jh' * gradient_term  # (2×1) * (1-vec) = 2-vec
-
-            # Gradient w.r.t. parameters: (y - λ) · ∂η/∂θ
-            h_θ = calc_h_θ(ssm.sensor, z.state_blocks[k], θ)  # ∂η/∂θ (1×3)
-            param_grad += h_θ' * gradient_term  # (3×1) * (1-vec) = 3-vec
+            h_θ = calc_h_θ(ssm.sensor, z.state_blocks[k], θ)  # M×P
+            param_grad += h_θ' * gradient_term
         end
     else
-        # Sparse observations
         @inbounds for (obs_idx, k) in enumerate(obs_indices)
-            η = h_param(ssm.sensor, z.state_blocks[k], θ)[1]
-            λ = exp(η)
-            y = ys[obs_idx][1]
-
-            gradient_term = @SVector [y - λ]
+            η = h_param(ssm.sensor, z.state_blocks[k], θ)
+            λ = exp.(η)
+            y = ys[obs_idx]
+            gradient_term = y - λ
 
             Jh = calc_Jh_param(ssm.sensor, z.state_blocks[k], θ)
             state_grads[k] += Jh' * gradient_term
@@ -322,7 +322,6 @@ function calc_ll_grad_param_poisson(
         residual = z.state_blocks[k] - μ
         state_grads[k - 1] += Jf' * Q_inv * residual
 
-        # Parameter gradient from dynamics
         f_θ = calc_f_θ(ssm.dyn, z.state_blocks[k - 1], θ)
         param_grad += f_θ' * Q_inv * residual
     end
@@ -333,7 +332,7 @@ end
 """
 Calculate Gauss-Newton metric for Poisson SSM.
 
-Key difference: Weight matrix W_t = λ_t = exp(η_t) is state and parameter dependent!
+Supports multi-channel observations with W_t = diag(λ_t).
 """
 function calc_G_param_poisson(
     z::BorderedBlockVector{T,D,P},
@@ -352,54 +351,42 @@ function calc_G_param_poisson(
 
     Q_inv = calc_Qinv_param(ssm.dyn)
 
-    # Build set of observed indices for fast lookup
     obs_set = isnothing(obs_indices) ? nothing : Set(obs_indices)
 
-    # Compute diagonal blocks and border blocks
     @inbounds for k in 1:K
-        # Base term (prior for k=1, dynamics for k>1)
         Λ = k == 1 ? SMatrix{D,D,T}(inv(ssm.prior.Σ)) : SMatrix{D,D,T}(Q_inv)
 
-        # Check if this time step has an observation
         has_obs = isnothing(obs_set) || (k in obs_set)
 
-        # Poisson observation term (only if observed)
         if has_obs
-            # W_t = λ_t (state-dependent weight!)
-            W_t = calc_Rinv_param(ssm.sensor, z.state_blocks[k], θ)[1, 1]
-            Jh = calc_Jh_param(ssm.sensor, z.state_blocks[k], θ)  # ∂η/∂x
+            W_t = calc_Rinv_param(ssm.sensor, z.state_blocks[k], θ)  # M×M diagonal
+            Jh = calc_Jh_param(ssm.sensor, z.state_blocks[k], θ)  # M×D
             Λ += Jh' * W_t * Jh
         end
 
-        # Dynamics term (contribution from k+1)
         if k < K
             Jf = calc_Jf_param(ssm.dyn, z.state_blocks[k], θ)
             Λ += Jf' * Q_inv * Jf
         end
 
-        # Force to be positive definite
         Λ = (Λ + Λ') / 2 + λ * I
         diag_blocks[k] = Λ
 
-        # Border block G_{k,θ}
         border_k = zeros(SMatrix{D,P,T})
 
-        # Observation contribution to border (only if observed)
         if has_obs
-            W_t = calc_Rinv_param(ssm.sensor, z.state_blocks[k], θ)[1, 1]
+            W_t = calc_Rinv_param(ssm.sensor, z.state_blocks[k], θ)
             Jh = calc_Jh_param(ssm.sensor, z.state_blocks[k], θ)
             h_θ = calc_h_θ(ssm.sensor, z.state_blocks[k], θ)
             border_k += Jh' * W_t * h_θ
         end
 
         if k > 1
-            # -Q⁻¹ f_{θ,k}
             f_θ_k = calc_f_θ(ssm.dyn, z.state_blocks[k - 1], θ)
             border_k += -SMatrix{D,P,T}(Q_inv * f_θ_k)
         end
 
         if k < K
-            # F_{k+1}' Q⁻¹ f_{θ,k+1}
             Jf_k1 = calc_Jf_param(ssm.dyn, z.state_blocks[k], θ)
             f_θ_k1 = calc_f_θ(ssm.dyn, z.state_blocks[k], θ)
             border_k += Jf_k1' * Q_inv * f_θ_k1
@@ -407,25 +394,21 @@ function calc_G_param_poisson(
 
         border_blocks[k] = border_k
 
-        # Corner block contributions from observations (only if observed)
         if has_obs
-            W_t = calc_Rinv_param(ssm.sensor, z.state_blocks[k], θ)[1, 1]
+            W_t = calc_Rinv_param(ssm.sensor, z.state_blocks[k], θ)
             h_θ_k = calc_h_θ(ssm.sensor, z.state_blocks[k], θ)
             corner_block += h_θ_k' * W_t * h_θ_k
         end
     end
 
-    # Dynamics contributions to corner block
     @inbounds for k in 2:K
         f_θ_k = calc_f_θ(ssm.dyn, z.state_blocks[k - 1], θ)
         corner_block += f_θ_k' * Q_inv * f_θ_k
     end
 
-    # Add prior precision to corner block
     corner_block += Diagonal(prior_prec)
     corner_block = (corner_block + corner_block') / 2 + λ * I
 
-    # Compute off-diagonal blocks
     @inbounds for k in 1:(K - 1)
         Jf = calc_Jf_param(ssm.dyn, z.state_blocks[k], θ)
         super_blocks[k] = -Jf' * Q_inv
@@ -439,7 +422,8 @@ end
 """
 Compute derivatives of G w.r.t. each state coordinate for Poisson SSM.
 
-Critical: Must account for ∂W_t/∂x where W_t = λ_t = exp(η_t)!
+Handles multi-channel observations. For weight matrix W = diag(λ):
+∂W/∂x_d = diag(λ .* Jh[:, d]) since ∂λ_m/∂x_d = λ_m * Jh[m, d]
 """
 function calc_dGs_state_poisson(
     z::BorderedBlockVector{T,D,P}, ssm; obs_indices=nothing
@@ -451,11 +435,9 @@ function calc_dGs_state_poisson(
 
     Q_inv = calc_Qinv_param(ssm.dyn)
 
-    # Build set of observed indices for fast lookup
     obs_set = isnothing(obs_indices) ? nothing : Set(obs_indices)
 
     @inbounds for k in 1:K
-        # Check if this time step has an observation
         has_obs = isnothing(obs_set) || (k in obs_set)
 
         Jf_k1 = k < K ? calc_Jf_param(ssm.dyn, z.state_blocks[k], θ) : zeros(SMatrix{D,D,T})
@@ -472,65 +454,52 @@ function calc_dGs_state_poisson(
             ntuple(_ -> zeros(SMatrix{D,P,T}), D)
         end
 
-        # Compute observation-related derivatives and weight (only if observed)
         if has_obs
-            η_k = h_param(ssm.sensor, z.state_blocks[k], θ)[1]
-            W_t = exp(η_k)  # λ_t
-            Jh_k = calc_Jh_param(ssm.sensor, z.state_blocks[k], θ)  # ∂η/∂x
-            Hhs_k = calc_Hhs_param(ssm.sensor, z.state_blocks[k], θ)  # = 0 for linear η
-            h_θ_k = calc_h_θ(ssm.sensor, z.state_blocks[k], θ)  # ∂η/∂θ
-            Hh_θs_k = calc_Hh_θs(ssm.sensor, z.state_blocks[k], θ)  # ∂²η/∂x∂θ
-        else
-            W_t = zero(T)
-            Jh_k = zeros(SMatrix{1,D,T})
-            Hhs_k = ntuple(_ -> zeros(SMatrix{1,D,T}), D)
-            h_θ_k = zeros(SMatrix{1,P,T})
-            Hh_θs_k = ntuple(_ -> zeros(SMatrix{1,P,T}), D)
+            η_k = h_param(ssm.sensor, z.state_blocks[k], θ)
+            λ_k = exp.(η_k)  # M-vector
+            W_t = Diagonal(λ_k)  # M×M diagonal
+            Jh_k = calc_Jh_param(ssm.sensor, z.state_blocks[k], θ)  # M×D
+            Hhs_k = calc_Hhs_param(ssm.sensor, z.state_blocks[k], θ)
+            h_θ_k = calc_h_θ(ssm.sensor, z.state_blocks[k], θ)  # M×P
+            Hh_θs_k = calc_Hh_θs(ssm.sensor, z.state_blocks[k], θ)
         end
 
         Mf = Q_inv * Jf_k1
 
         for d in 1:D
-            # Diagonal block ∂G_{kk}/∂x_k^{(d)}
             diag_block = zeros(SMatrix{D,D,T})
             if k < K
                 diag_block += Hfs_k1[d]' * Mf + Mf' * Hfs_k1[d]
             end
             if has_obs
-                # For Poisson: ∂(Jh^T W Jh)/∂x_d = Jh^T (∂W/∂x_d) Jh
-                # since Hhs = 0 (η is linear in x)
-                # ∂W/∂x_d = λ · ∂η/∂x_d = λ · Jh[d]
-                dW_dx_d = W_t * Jh_k[1, d]
+                # ∂(Jh^T W Jh)/∂x_d = Jh^T (∂W/∂x_d) Jh + Hhs terms (Hhs = 0 for linear η)
+                # ∂W/∂x_d = diag(λ .* Jh[:, d])
+                dW_dx_d = Diagonal(λ_k .* Jh_k[:, d])
                 diag_block += Jh_k' * dW_dx_d * Jh_k
             end
 
-            # Off-diagonal block ∂G_{k,k+1}/∂x_k^{(d)}
             super_block = k < K ? -Hfs_k1[d]' * Q_inv : zeros(SMatrix{D,D,T})
 
-            # Border block ∂G_{k,θ}/∂x_k^{(d)}
             border_block_k = zeros(SMatrix{D,P,T})
             if k < K
                 border_block_k += Hfs_k1[d]' * Q_inv * f_θ_k1 + Jf_k1' * Q_inv * Hf_θs_k1[d]
             end
             if has_obs
-                # ∂(Jh^T W h_θ)/∂x_d = (∂Jh/∂x_d)^T W h_θ + Jh^T (∂W/∂x_d) h_θ + Jh^T W (∂h_θ/∂x_d)
-                # = 0 + Jh^T (λ · Jh[d]) h_θ + Jh^T W Hh_θs[d]
-                dW_dx_d = W_t * Jh_k[1, d]
+                # ∂(Jh^T W h_θ)/∂x_d = Jh^T (∂W/∂x_d) h_θ + Jh^T W (∂h_θ/∂x_d)
+                dW_dx_d = Diagonal(λ_k .* Jh_k[:, d])
                 border_block_k += Jh_k' * dW_dx_d * h_θ_k + Jh_k' * W_t * Hh_θs_k[d]
             end
 
-            # Border block ∂G_{k+1,θ}/∂x_k^{(d)}
             border_block_k1 = k < K ? -Q_inv * Hf_θs_k1[d] : zeros(SMatrix{D,P,T})
 
-            # Corner block ∂G_{θθ}/∂x_k^{(d)}
             corner_block = zeros(SMatrix{P,P,T})
             if k < K
                 corner_block +=
                     Hf_θs_k1[d]' * Q_inv * f_θ_k1 + f_θ_k1' * Q_inv * Hf_θs_k1[d]
             end
             if has_obs
-                # ∂(h_θ^T W h_θ)/∂x_d = h_θ^T (∂W/∂x_d) h_θ  (since ∂h_θ/∂x = Hh_θs is simple)
-                dW_dx_d = W_t * Jh_k[1, d]
+                # ∂(h_θ^T W h_θ)/∂x_d = h_θ^T (∂W/∂x_d) h_θ + Hh_θs terms
+                dW_dx_d = Diagonal(λ_k .* Jh_k[:, d])
                 corner_block +=
                     Hh_θs_k[d]' * W_t * h_θ_k +
                     h_θ_k' * dW_dx_d * h_θ_k +
@@ -549,7 +518,8 @@ end
 """
 Compute derivatives of G w.r.t. each parameter coordinate for Poisson SSM.
 
-Critical: Must account for ∂W_t/∂θ where W_t = λ_t = exp(η_t)!
+Handles multi-channel observations. For weight matrix W = diag(λ):
+∂W/∂θ_p = diag(λ .* h_θ[:, p]) since ∂λ_m/∂θ_p = λ_m * h_θ[m, p]
 """
 function calc_dGs_param_poisson(
     z::BorderedBlockVector{T,D,P}, ssm; obs_indices=nothing
@@ -567,7 +537,6 @@ function calc_dGs_param_poisson(
 
     Q_inv = calc_Qinv_param(ssm.dyn)
 
-    # Build set of observed indices for fast lookup
     obs_set = isnothing(obs_indices) ? nothing : Set(obs_indices)
 
     for p in 1:P
@@ -577,7 +546,6 @@ function calc_dGs_param_poisson(
         corner_block = zeros(SMatrix{P,P,T,P^2})
 
         @inbounds for k in 1:K
-            # Check if this time step has an observation
             has_obs = isnothing(obs_set) || (k in obs_set)
 
             Jf_k1 =
@@ -595,21 +563,20 @@ function calc_dGs_param_poisson(
                 ntuple(_ -> zeros(SMatrix{D,P,T}), P)
             end
 
-            # Diagonal block ∂G_{kk}/∂θ^{(p)}
             diag_block = zeros(SMatrix{D,D,T})
             if k < K
                 diag_block += Jf_θ_k1[p]' * Q_inv * Jf_k1 + Jf_k1' * Q_inv * Jf_θ_k1[p]
             end
             if has_obs
-                # For Poisson: ∂(Jh^T W Jh)/∂θ_p = (∂Jh/∂θ_p)^T W Jh + Jh^T (∂W/∂θ_p) Jh + Jh^T W (∂Jh/∂θ_p)
-                η_k = h_param(ssm.sensor, z.state_blocks[k], θ)[1]
-                W_t = exp(η_k)
+                η_k = h_param(ssm.sensor, z.state_blocks[k], θ)
+                λ_k = exp.(η_k)
+                W_t = Diagonal(λ_k)
                 Jh_k = calc_Jh_param(ssm.sensor, z.state_blocks[k], θ)
                 Jh_θ_k = calc_Jh_θ(ssm.sensor, z.state_blocks[k], θ)
                 h_θ_k = calc_h_θ(ssm.sensor, z.state_blocks[k], θ)
 
-                # ∂W/∂θ_p = λ · ∂η/∂θ_p = λ · h_θ[p]
-                dW_dθ_p = W_t * h_θ_k[1, p]
+                # ∂W/∂θ_p = diag(λ .* h_θ[:, p])
+                dW_dθ_p = Diagonal(λ_k .* h_θ_k[:, p])
                 diag_block +=
                     Jh_θ_k[p]' * W_t * Jh_k +
                     Jh_k' * dW_dθ_p * Jh_k +
@@ -617,7 +584,6 @@ function calc_dGs_param_poisson(
             end
             diag_blocks[k] = diag_block
 
-            # Border block ∂G_{k,θ}/∂θ^{(p)}
             border_block = zeros(SMatrix{D,P,T})
             if k > 1
                 f_θ_k = calc_f_θ(ssm.dyn, z.state_blocks[k - 1], θ)
@@ -628,14 +594,15 @@ function calc_dGs_param_poisson(
                 border_block += Jf_θ_k1[p]' * Q_inv * f_θ_k1 + Jf_k1' * Q_inv * f_θθ_k1[p]
             end
             if has_obs
-                η_k = h_param(ssm.sensor, z.state_blocks[k], θ)[1]
-                W_t = exp(η_k)
+                η_k = h_param(ssm.sensor, z.state_blocks[k], θ)
+                λ_k = exp.(η_k)
+                W_t = Diagonal(λ_k)
                 Jh_k = calc_Jh_param(ssm.sensor, z.state_blocks[k], θ)
                 Jh_θ_k = calc_Jh_θ(ssm.sensor, z.state_blocks[k], θ)
                 h_θ_k = calc_h_θ(ssm.sensor, z.state_blocks[k], θ)
                 h_θθ_k = calc_h_θθ(ssm.sensor, z.state_blocks[k], θ)
 
-                dW_dθ_p = W_t * h_θ_k[1, p]
+                dW_dθ_p = Diagonal(λ_k .* h_θ_k[:, p])
                 border_block +=
                     Jh_θ_k[p]' * W_t * h_θ_k +
                     Jh_k' * dW_dθ_p * h_θ_k +
@@ -643,14 +610,14 @@ function calc_dGs_param_poisson(
             end
             border_blocks[k] = border_block
 
-            # Corner block contributions from this k (only if observed)
             if has_obs
-                η_k = h_param(ssm.sensor, z.state_blocks[k], θ)[1]
-                W_t = exp(η_k)
+                η_k = h_param(ssm.sensor, z.state_blocks[k], θ)
+                λ_k = exp.(η_k)
+                W_t = Diagonal(λ_k)
                 h_θ_k = calc_h_θ(ssm.sensor, z.state_blocks[k], θ)
                 h_θθ_k = calc_h_θθ(ssm.sensor, z.state_blocks[k], θ)
 
-                dW_dθ_p = W_t * h_θ_k[1, p]
+                dW_dθ_p = Diagonal(λ_k .* h_θ_k[:, p])
                 corner_block +=
                     h_θθ_k[p]' * W_t * h_θ_k +
                     h_θ_k' * dW_dθ_p * h_θ_k +
@@ -658,13 +625,11 @@ function calc_dGs_param_poisson(
             end
         end
 
-        # Off-diagonal blocks ∂G_{k,k-1}/∂θ^{(p)}
         @inbounds for k in 1:(K - 1)
             Jf_θ_k1 = calc_Jf_θ(ssm.dyn, z.state_blocks[k], θ)
             super_blocks[k] = -Jf_θ_k1[p]' * Q_inv
         end
 
-        # Corner block contributions from dynamics
         @inbounds for k in 2:K
             f_θ_k = calc_f_θ(ssm.dyn, z.state_blocks[k - 1], θ)
             f_θθ_k = calc_f_θθ(ssm.dyn, z.state_blocks[k - 1], θ)

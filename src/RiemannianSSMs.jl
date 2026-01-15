@@ -19,5 +19,7 @@ include("models/van_der_pol_param.jl")
 include("models/partial_linear_observation_param.jl")
 include("models/random_walk_dynamics_param.jl")
 include("models/poisson_observation_param.jl")
+include("models/fitzhugh_nagumo_param.jl")
+include("models/poisson_multi_channel_param.jl")
 
 end
