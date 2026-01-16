@@ -26,6 +26,7 @@ P = 3      # Parameter dimension (a_1, a_2, b)
 # Time discretization
 K_y = 5           # Latent steps between observations
 N_obs = 40         # Number of observations
+# N_obs = 100      # Can't learn mass matrix in this case
 K = N_obs * K_y    # Total number of latent states (200)
 
 # Observation indices (1-indexed, every K_y-th state starting from K_y)
@@ -278,7 +279,7 @@ println("b: true=$(b_true), posterior mean=$(mean(b_post)), std=$(std(b_post))")
 # ============================================================================
 
 println("\nRunning HMC with joint state+parameter inference (Poisson)...")
-hmc = NUTS(0.8)
+hmc = NUTS(0.8; metric=:dense)
 hmc_chains = AbstractMCMC.sample(
     model,
     hmc,
