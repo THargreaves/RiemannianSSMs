@@ -808,7 +808,7 @@ end
     # Random state vector
     z = rand(rng, K * D + P)
 
-    G = calc_observed_hessian(z, ssm, K, D, P, prior_prec, obs_indices)
+    G = calc_observed_hessian(z, ssm, K, Val(D), Val(P), prior_prec, obs_indices)
     G_dense = Matrix(G)
 
     # Check symmetry
@@ -851,14 +851,16 @@ end
     z = rand(rng, K * D + P)
 
     # Compute analytical observed Hessian (negative Hessian of log-likelihood)
-    G = calc_observed_hessian(z, ssm, K, D, P, prior_prec, obs_indices)
+    G = calc_observed_hessian(z, ssm, K, Val(D), Val(P), prior_prec, obs_indices)
     G_dense = Matrix(G)
 
     # Compute numerical Hessian of negative log-likelihood
     function neg_ll_fn(z_vec)
         z_blocks = to_bordered_block_vector(z, Val(D), Val(P))
         # return -calc_ll(z_blocks, ssm, K, D, P, prior_prec, obs_indices)
-        return -calc_ll_observed(z_vec, ys, ssm, K, D, P, [0.0], prior_prec, obs_indices)
+        return -calc_ll_observed(
+            z_vec, ys, ssm, K, Val(D), Val(P), [0.0], prior_prec, obs_indices
+        )
     end
 
     H_numerical = FiniteDiff.finite_difference_hessian(neg_ll_fn, z)
@@ -908,13 +910,13 @@ end
 
     # Compute analytical log-likelihood gradient
     grad_analytical = calc_ll_grad_observed(
-        z, ys, ssm, K, D, P, prior_mean, prior_prec, obs_indices
+        z, ys, ssm, K, Val(D), Val(P), prior_mean, prior_prec, obs_indices
     )
 
     # Compute numerical gradient
     function ll_fn(z_vec)
         return calc_ll_observed(
-            z_vec, ys, ssm, K, D, P, prior_mean, prior_prec, obs_indices
+            z_vec, ys, ssm, K, Val(D), Val(P), prior_mean, prior_prec, obs_indices
         )
     end
 
@@ -958,7 +960,7 @@ end
     n = K * D + P
 
     # Compute analytical derivatives
-    dGs_analytical = calc_observed_hessian_derivs(z, ssm, K, D, P, obs_indices)
+    dGs_analytical = calc_observed_hessian_derivs(z, ssm, K, Val(D), Val(P), obs_indices)
 
     # Check against finite differences for each component
     ε = 1e-6
@@ -974,8 +976,12 @@ end
         z_minus = copy(z)
         z_minus[i] -= ε
 
-        G_plus = calc_observed_hessian(z_plus, ssm, K, D, P, prior_prec, obs_indices)
-        G_minus = calc_observed_hessian(z_minus, ssm, K, D, P, prior_prec, obs_indices)
+        G_plus = calc_observed_hessian(
+            z_plus, ssm, K, Val(D), Val(P), prior_prec, obs_indices
+        )
+        G_minus = calc_observed_hessian(
+            z_minus, ssm, K, Val(D), Val(P), prior_prec, obs_indices
+        )
 
         dG_numerical = (G_plus - G_minus) / (2ε)
         dGs_numerical[i] = dG_numerical
@@ -1034,7 +1040,9 @@ end
     u = fill(0.5, n)
 
     # Create metric and Hamiltonian
-    metric = ObservedHessianMetric(ssm, ys, D, P, K, prior_mean, prior_var, obs_indices, u)
+    metric = ObservedHessianMetric(
+        ssm, ys, Val(D), Val(P), K, prior_mean, prior_var, obs_indices, u
+    )
 
     struct LogTargetDensityParamSparse{D,P,M,V,PM,PV,OI}
         dim::Int
@@ -1108,11 +1116,21 @@ end
         # Potential energy: -log π(z)
         U =
             -calc_ll_observed(
-                z_vec, ys, ssm, K, D, P, collect(prior_mean), prior_prec_vec, obs_indices
+                z_vec,
+                ys,
+                ssm,
+                K,
+                Val(D),
+                Val(P),
+                collect(prior_mean),
+                prior_prec_vec,
+                obs_indices,
             )
 
         # Kinetic energy: 0.5 * log|G| + 0.5 * r' G^{-1} r
-        G = calc_observed_hessian(z_vec, ssm, K, D, P, prior_prec_vec, obs_indices)
+        G = calc_observed_hessian(
+            z_vec, ssm, K, Val(D), Val(P), prior_prec_vec, obs_indices
+        )
         F = MCRHMC.modified_cholesky(G, u, 0)
         logdetG = MCRHMC.logdet(F)
         v = F \ r
@@ -1170,7 +1188,7 @@ end
     u = fill(0.5, n)
 
     # Compute G and its factorization
-    G = calc_observed_hessian(z, ssm, K, D, P, prior_prec, obs_indices)
+    G = calc_observed_hessian(z, ssm, K, Val(D), Val(P), prior_prec, obs_indices)
     F = MCRHMC.modified_cholesky(G, u, 0)
     v = F \ r
 
@@ -1179,7 +1197,7 @@ end
     H_grad_dense = Matrix(H_grad)
 
     # Compute dGs
-    dGs = calc_observed_hessian_derivs(z, ssm, K, D, P, obs_indices)
+    dGs = calc_observed_hessian_derivs(z, ssm, K, Val(D), Val(P), obs_indices)
 
     # Compute kinetic gradient using sparse_trace_symmetric
     kinetic_grad_sparse = zeros(n)
@@ -1189,7 +1207,9 @@ end
 
     # Compute kinetic gradient using dense operations for reference
     function kinetic_energy(z_vec)
-        G_pert = calc_observed_hessian(z_vec, ssm, K, D, P, prior_prec, obs_indices)
+        G_pert = calc_observed_hessian(
+            z_vec, ssm, K, Val(D), Val(P), prior_prec, obs_indices
+        )
         F_pert = MCRHMC.modified_cholesky(G_pert, u, 0)
         logdetG = MCRHMC.logdet(F_pert)
         v_pert = F_pert \ r

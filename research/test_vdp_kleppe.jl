@@ -32,7 +32,7 @@ P = 1      # Parameter dimension (log μ)
 # Time discretization
 δt = 0.1           # Euler step size
 K_y = 10           # Latent steps between observations
-N_obs = 20         # Number of observations
+N_obs = 5         # Number of observations
 K = N_obs * K_y    # Total number of latent states (200)
 
 # Observation indices (1-indexed, every K_y-th state starting from K_y)
@@ -213,7 +213,7 @@ u = fill(1e1, n)  # Larger regularization for stability
 
 println("\nSetting up Kleppe's Observed Hessian metric...")
 kleppe_metric = ObservedHessianMetric(
-    ssm, ys, D, P, K, prior_mean, prior_var, obs_indices, u
+    ssm, ys, Val(D), Val(P), K, prior_mean, prior_var, obs_indices, u
 )
 println(kleppe_metric)
 
@@ -221,7 +221,7 @@ println(kleppe_metric)
 kleppe_hamiltonian = Hamiltonian(kleppe_metric, ℓπ)
 
 # Use the same integrator settings as the Fisher/GGN approach
-initial_ϵ = 0.1
+initial_ϵ = 0.01
 kleppe_integrator = AdaptiveGeneralizedLeapfrog(initial_ϵ; max_iters=7)
 kleppe_kernel = HMCKernel(
     Trajectory{MultinomialTS}(kleppe_integrator, GeneralisedNoUTurn())
@@ -390,7 +390,6 @@ println(
 println(
     "Fisher/GGN:               min=$(round(minimum(weighted_fisher_state_ess), digits=6)), median=$(round(median(weighted_fisher_state_ess), digits =6)), mean=$(round(mean(weighted_fisher_state_ess), digits=6))",
 )
-
 
 # ============================================================================
 # Plots

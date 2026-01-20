@@ -65,7 +65,7 @@ function simulate(rng::AbstractRNG, ssm, θ, K::Int, obs_indices)
             z = SVector{2,Float64}(rand(rng, ssm.prior))
         else
             z =
-                f_param(ssm.dyn, zs[k-1], θ) +
+                f_param(ssm.dyn, zs[k - 1], θ) +
                 rand(rng, MvNormal(zeros(2), calc_Q_param(ssm.dyn)))
         end
         zs[k] = z
@@ -97,7 +97,7 @@ println("\n" * "-"^70)
 println("1. OBSERVED HESSIAN AT TRUE POINT")
 println("-"^70)
 
-G_true = calc_observed_hessian(initial_θ, ssm, K, D, P, prior_prec, obs_indices)
+G_true = calc_observed_hessian(initial_θ, ssm, K, Val(D), Val(P), prior_prec, obs_indices)
 G_true_dense = Matrix(G_true)
 
 println("\nMatrix properties:")
@@ -157,11 +157,15 @@ perturbation = perturbation / norm(perturbation)
 scales = [0.0, 0.01, 0.1, 0.5, 1.0, 2.0, 5.0]
 
 println("\nPerturbing from true point in random direction:")
-println(@sprintf("%-10s %15s %15s %15s %15s", "Scale", "Min eig", "Max eig", "Cond #", "Neg eigs"))
+println(
+    @sprintf(
+        "%-10s %15s %15s %15s %15s", "Scale", "Min eig", "Max eig", "Cond #", "Neg eigs"
+    )
+)
 
 for scale in scales
     θ_pert = initial_θ + scale * perturbation
-    G_pert = calc_observed_hessian(θ_pert, ssm, K, D, P, prior_prec, obs_indices)
+    G_pert = calc_observed_hessian(θ_pert, ssm, K, Val(D), Val(P), prior_prec, obs_indices)
     eigs = eigvals(Symmetric(Matrix(G_pert)))
 
     min_eig = minimum(eigs)
@@ -169,7 +173,11 @@ for scale in scales
     cond = max_eig / max(min_eig, 1e-15)
     neg_count = sum(eigs .< 0)
 
-    println(@sprintf("%-10.2f %15.2e %15.2e %15.2e %15d", scale, min_eig, max_eig, cond, neg_count))
+    println(
+        @sprintf(
+            "%-10.2f %15.2e %15.2e %15.2e %15d", scale, min_eig, max_eig, cond, neg_count
+        )
+    )
 end
 
 # ============================================================================
@@ -185,13 +193,22 @@ function check_trajectory_stability(θ_start, n_steps, step_size, u_val)
     θ = copy(θ_start)
 
     println("\nStep size: $step_size, u = $u_val")
-    println(@sprintf("%-6s %12s %12s %12s %10s %12s",
-                     "Step", "Min eig", "Max eig", "Cond #", "Neg eigs", "Solve resid"))
+    println(
+        @sprintf(
+            "%-6s %12s %12s %12s %10s %12s",
+            "Step",
+            "Min eig",
+            "Max eig",
+            "Cond #",
+            "Neg eigs",
+            "Solve resid"
+        )
+    )
 
     u = fill(u_val, n)
 
     for step in 0:n_steps
-        G = calc_observed_hessian(θ, ssm, K, D, P, prior_prec, obs_indices)
+        G = calc_observed_hessian(θ, ssm, K, Val(D), Val(P), prior_prec, obs_indices)
         eigs = eigvals(Symmetric(Matrix(G)))
 
         min_eig = minimum(eigs)
@@ -206,8 +223,17 @@ function check_trajectory_stability(θ_start, n_steps, step_size, u_val)
         G_rec = reconstruct(F)
         residual = norm(Matrix(G_rec) * x - b) / norm(b)
 
-        println(@sprintf("%-6d %12.2e %12.2e %12.2e %10d %12.2e",
-                         step, min_eig, max_eig, cond, neg_count, residual))
+        println(
+            @sprintf(
+                "%-6d %12.2e %12.2e %12.2e %10d %12.2e",
+                step,
+                min_eig,
+                max_eig,
+                cond,
+                neg_count,
+                residual
+            )
+        )
 
         if step < n_steps
             # Random step in momentum-like direction
@@ -232,7 +258,7 @@ for _ in 1:3
     θ_test = initial_θ + 0.5 * randn(n)
     r = randn(n)  # Random momentum
 
-    G = calc_observed_hessian(θ_test, ssm, K, D, P, prior_prec, obs_indices)
+    G = calc_observed_hessian(θ_test, ssm, K, Val(D), Val(P), prior_prec, obs_indices)
     F = modified_cholesky(G, u, 0)
 
     # Check if factorization is valid
@@ -334,7 +360,9 @@ end
 
 # Set up metric and Hamiltonian
 u = fill(1e-1, n)
-metric = ObservedHessianMetric(ssm, ys, D, P, K, prior_mean, prior_var, obs_indices, u)
+metric = ObservedHessianMetric(
+    ssm, ys, Val(D), Val(P), K, prior_mean, prior_var, obs_indices, u
+)
 h = Hamiltonian(metric, ℓπ)
 
 # Create phase point at initial position with random momentum

@@ -22,13 +22,11 @@ export calc_ll_observed, calc_ll_grad_observed
 # Metric Type
 # ============================================================================
 
-struct ObservedHessianMetric{T,SSM,YT,OI} <: AdvancedHMC.AbstractRiemannianMetric
+struct ObservedHessianMetric{T,D,P,SSM,YT,OI} <: AdvancedHMC.AbstractRiemannianMetric
     ssm::SSM
     ys::YT
     obs_indices::OI
     K::Int                     # Total number of latent states
-    D::Int                     # State dimension (2 for VDP)
-    P::Int                     # Parameter dimension (1 for VDP)
     prior_mean::Vector{T}      # Prior mean for parameters
     prior_prec::Vector{T}      # Prior precision for parameters
     u::Vector{T}               # Regularization parameters for modified Cholesky
@@ -38,28 +36,32 @@ end
 function ObservedHessianMetric(
     ssm,
     ys,
-    D::Int,
-    P::Int,
+    ::Val{D},
+    ::Val{P},
     K::Int,
     prior_mean,
     prior_var,
     obs_indices::Vector{Int},
     u::Vector{T},
-) where {T}
+) where {T,D,P}
     prior_prec = 1 ./ prior_var
     n = K * D + P
     @assert length(u) == n "Regularization vector u must have length $n, got $(length(u))"
-    return ObservedHessianMetric{T,typeof(ssm),typeof(ys),Vector{Int}}(
-        ssm, ys, obs_indices, K, D, P, collect(prior_mean), collect(prior_prec), u, nothing
+    return ObservedHessianMetric{T,D,P,typeof(ssm),typeof(ys),Vector{Int}}(
+        ssm, ys, obs_indices, K, collect(prior_mean), collect(prior_prec), u, nothing
     )
 end
 
-Base.size(m::ObservedHessianMetric) = (m.K * m.D + m.P,)
-Base.size(m::ObservedHessianMetric, ::Int) = m.K * m.D + m.P
+Base.size(m::ObservedHessianMetric{T,D,P}) where {T,D,P} = (m.K * D + P,)
+Base.size(m::ObservedHessianMetric{T,D,P}, ::Int) where {T,D,P} = m.K * D + P
 Base.eltype(::ObservedHessianMetric{T}) where {T} = T
 
-function Base.show(io::IO, m::ObservedHessianMetric)
-    return print(io, "ObservedHessianMetric(K=$(m.K), D=$(m.D), P=$(m.P))")
+function Base.show(io::IO, ::Type{<:ObservedHessianMetric{T,D,P}}) where {T,D,P}
+    return print(io, "ObservedHessianMetric{$T,$D,$P}")
+end
+
+function Base.show(io::IO, m::ObservedHessianMetric{T,D,P}) where {T,D,P}
+    return print(io, "ObservedHessianMetric(K=$(m.K), D=$D, P=$P)")
 end
 
 # ============================================================================
@@ -71,12 +73,12 @@ function calc_ll_observed(
     ys,
     ssm,
     K::Int,
-    D::Int,
-    P::Int,
+    ::Val{D},
+    ::Val{P},
     prior_mean::Vector{T},
     prior_prec::Vector{T},
     obs_indices,
-) where {T}
+) where {T,D,P}
     # Extract parameter
     θ = @SVector [z[K * D + 1]]
 
@@ -114,12 +116,12 @@ function calc_ll_grad_observed(
     ys,
     ssm,
     K::Int,
-    D::Int,
-    P::Int,
+    ::Val{D},
+    ::Val{P},
     prior_mean::Vector{T},
     prior_prec::Vector{T},
     obs_indices,
-) where {T}
+) where {T,D,P}
     n = K * D + P
     grad = zeros(T, n)
 
@@ -196,8 +198,14 @@ This is the OBSERVED Hessian, which includes second-order terms from nonlinear d
 where r_k = z_k - f(z_{k-1}, θ) is the residual.
 """
 function calc_observed_hessian(
-    z::AbstractVector{T}, ssm, K::Int, D::Int, P::Int, prior_prec::Vector{T}, obs_indices
-) where {T}
+    z::AbstractVector{T},
+    ssm,
+    K::Int,
+    ::Val{D},
+    ::Val{P},
+    prior_prec::Vector{T},
+    obs_indices,
+) where {T,D,P}
     n = K * D + P
 
     # Build sparse matrix using COO format then convert
@@ -391,8 +399,8 @@ Compute derivatives of the observed Hessian w.r.t. each component of z.
 Returns a vector of sparse matrices ∂G/∂z_i for i = 1:n.
 """
 function calc_observed_hessian_derivs(
-    z::AbstractVector{T}, ssm, K::Int, D::Int, P::Int, obs_indices
-) where {T}
+    z::AbstractVector{T}, ssm, K::Int, vD::Val{D}, vP::Val{P}, obs_indices
+) where {T,D,P}
     n = K * D + P
     dGs = Vector{SparseMatrixCSC{T,Int}}(undef, n)
 
@@ -407,14 +415,14 @@ function calc_observed_hessian_derivs(
     @inbounds for k in 1:K
         for d in 1:D
             idx = (k - 1) * D + d
-            dGs[idx] = calc_dG_dz_kd(z, ssm, K, D, P, k, d, θ, Q_inv, R_inv, obs_set)
+            dGs[idx] = calc_dG_dz_kd(z, ssm, K, vD, vP, k, d, θ, Q_inv, R_inv, obs_set)
         end
     end
 
     # Derivatives w.r.t. parameter components
     @inbounds for p in 1:P
         idx = K * D + p
-        dGs[idx] = calc_dG_dθ_p(z, ssm, K, D, P, p, θ, Q_inv, R_inv, obs_set)
+        dGs[idx] = calc_dG_dθ_p(z, ssm, K, vD, vP, p, θ, Q_inv, R_inv, obs_set)
     end
 
     return dGs
@@ -432,15 +440,15 @@ function calc_dG_dz_kd(
     z::AbstractVector{T},
     ssm,
     K::Int,
-    D::Int,
-    P::Int,
+    ::Val{D},
+    ::Val{P},
     k::Int,
     d::Int,
     θ,
     Q_inv,
     R_inv,
     obs_set,
-) where {T}
+) where {T,D,P}
     n = K * D + P
     I_idx = Int[]
     J_idx = Int[]
@@ -713,8 +721,8 @@ Following the same pattern as calc_dG_dz_kd:
 - For VDP with log-parameterization: ∂(∇²f_i)/∂θ = ∇²f_i (third derivatives)
 """
 function calc_dG_dθ_p(
-    z::AbstractVector{T}, ssm, K::Int, D::Int, P::Int, p::Int, θ, Q_inv, R_inv, obs_set
-) where {T}
+    z::AbstractVector{T}, ssm, K::Int, ::Val{D}, ::Val{P}, p::Int, θ, Q_inv, R_inv, obs_set
+) where {T,D,P}
     n = K * D + P
     I_idx = Int[]
     J_idx = Int[]
@@ -887,27 +895,27 @@ end
 
 function AdvancedHMC.rand_momentum(
     rng::Union{AbstractRNG,AbstractVector{<:AbstractRNG}},
-    metric::ObservedHessianMetric{T},
+    metric::ObservedHessianMetric{T,D,P},
     kinetic,
     z::AbstractVecOrMat,
-) where {T}
+) where {T,D,P}
     G = calc_observed_hessian(
-        z, metric.ssm, metric.K, metric.D, metric.P, metric.prior_prec, metric.obs_indices
+        z, metric.ssm, metric.K, Val{D}(), Val{P}(), metric.prior_prec, metric.obs_indices
     )
 
     # Modified Cholesky factorization
     F = MCRHMC.modified_cholesky(G, metric.u, 0)
 
     # Sample Z ~ N(0, I)
-    n = metric.K * metric.D + metric.P
+    n = metric.K * D + P
     Z = randn(rng, n)
 
-    # Transform to r ~ N(0, G) via r = L * sqrt(D) * Z
-    # where G ≈ L D L'
+    # Transform to r ~ N(0, G) via r = L * sqrt(D_diag) * Z
+    # where G ≈ L D_diag L'
     L = MCRHMC.get_L(F)
     D_diag = MCRHMC.get_D(F)
 
-    # r = L * (sqrt.(D) .* Z)
+    # r = L * (sqrt.(D_diag) .* Z)
     r = L * (sqrt.(D_diag.diag) .* Z)
 
     return r
@@ -917,19 +925,19 @@ end
 Compute negative kinetic energy: -log p(r|z) - normalizing_constant.
 """
 function AdvancedHMC.neg_energy(
-    h::Hamiltonian{<:ObservedHessianMetric{T}}, r::V, z::V
-) where {V<:AbstractVecOrMat,T}
+    h::Hamiltonian{<:ObservedHessianMetric{T,D,P}}, r::V, z::V
+) where {V<:AbstractVecOrMat,T,D,P}
     metric = h.metric
-    n = metric.K * metric.D + metric.P
+    n = metric.K * D + P
 
     G = calc_observed_hessian(
-        z, metric.ssm, metric.K, metric.D, metric.P, metric.prior_prec, metric.obs_indices
+        z, metric.ssm, metric.K, Val{D}(), Val{P}(), metric.prior_prec, metric.obs_indices
     )
 
     # Modified Cholesky factorization
     F = MCRHMC.modified_cholesky(G, metric.u, 0)
 
-    # log|G| = sum(log(D))
+    # log|G| = sum(log(D_diag))
     logdetG = MCRHMC.logdet(F)
     logZ = 0.5 * (n * log(2π) + logdetG)
 
@@ -941,12 +949,12 @@ function AdvancedHMC.neg_energy(
 end
 
 function AdvancedHMC.∂H∂θ(
-    h::Hamiltonian{<:ObservedHessianMetric{T}},
+    h::Hamiltonian{<:ObservedHessianMetric{T,D,P}},
     z::AbstractVecOrMat{T},
     r::AbstractVecOrMat{T},
-) where {T}
+) where {T,D,P}
     metric = h.metric
-    n = metric.K * metric.D + metric.P
+    n = metric.K * D + P
 
     # Compute log-likelihood and gradient
     ℓπ = calc_ll_observed(
@@ -954,8 +962,8 @@ function AdvancedHMC.∂H∂θ(
         metric.ys,
         metric.ssm,
         metric.K,
-        metric.D,
-        metric.P,
+        Val{D}(),
+        Val{P}(),
         metric.prior_mean,
         metric.prior_prec,
         metric.obs_indices,
@@ -965,8 +973,8 @@ function AdvancedHMC.∂H∂θ(
         metric.ys,
         metric.ssm,
         metric.K,
-        metric.D,
-        metric.P,
+        Val{D}(),
+        Val{P}(),
         metric.prior_mean,
         metric.prior_prec,
         metric.obs_indices,
@@ -974,7 +982,7 @@ function AdvancedHMC.∂H∂θ(
 
     # Compute observed Hessian
     G = calc_observed_hessian(
-        z, metric.ssm, metric.K, metric.D, metric.P, metric.prior_prec, metric.obs_indices
+        z, metric.ssm, metric.K, Val{D}(), Val{P}(), metric.prior_prec, metric.obs_indices
     )
 
     # Modified Cholesky factorization
@@ -989,7 +997,7 @@ function AdvancedHMC.∂H∂θ(
 
     # Compute derivatives of G w.r.t. each component
     dGs = calc_observed_hessian_derivs(
-        z, metric.ssm, metric.K, metric.D, metric.P, metric.obs_indices
+        z, metric.ssm, metric.K, Val{D}(), Val{P}(), metric.obs_indices
     )
 
     # Compute full gradient: ∂H/∂z_i = -∂ℓπ/∂z_i + trace(H_grad' × ∂G/∂z_i)
@@ -1007,12 +1015,14 @@ function AdvancedHMC.∂H∂θ(
 end
 
 function AdvancedHMC.∂H∂r(
-    h::Hamiltonian{<:ObservedHessianMetric{T}}, z::AbstractVecOrMat, r::AbstractVecOrMat
-) where {T}
+    h::Hamiltonian{<:ObservedHessianMetric{T,D,P,SSM,YT,OI}},
+    z::AbstractVecOrMat,
+    r::AbstractVecOrMat,
+) where {T,D,P,SSM,YT,OI}
     metric = h.metric
 
     G = calc_observed_hessian(
-        z, metric.ssm, metric.K, metric.D, metric.P, metric.prior_prec, metric.obs_indices
+        z, metric.ssm, metric.K, Val{D}(), Val{P}(), metric.prior_prec, metric.obs_indices
     )
 
     # Modified Cholesky factorization
