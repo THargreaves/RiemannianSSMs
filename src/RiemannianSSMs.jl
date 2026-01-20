@@ -4,6 +4,10 @@ using LinearAlgebra
 using Random
 using StaticArrays
 using PDMats
+using SparseArrays
+
+# Include MCRHMC submodule first
+include("MCRHMC/MCRHMC.jl")
 
 include("block_types.jl")
 include("linalg.jl")
@@ -21,5 +25,8 @@ include("models/random_walk_dynamics_param.jl")
 include("models/poisson_observation_param.jl")
 include("models/fitzhugh_nagumo_param.jl")
 include("models/poisson_multi_channel_param.jl")
+
+# Kleppe's observed Hessian metric (uses MCRHMC submodule)
+include("kleppe_vdp.jl")
 
 end

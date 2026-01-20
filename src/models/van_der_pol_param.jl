@@ -1,6 +1,13 @@
 export VanDerPolDynamicsParam
-export f_param, calc_Jf_param, calc_Hfs_param, calc_Q_param, calc_Qinv_param
-export calc_f_θ, calc_Hf_θs, calc_Jf_θ, calc_f_θθ
+export f_param,
+    calc_Jf_param,
+    calc_Hfs_param,
+    calc_dyn_hessians,
+    calc_dyn_hessian_derivs,
+    calc_Q_param,
+    calc_Qinv_param
+export calc_f_θ,
+    calc_Hf_θs, calc_mixed_hessians, calc_mixed_hessian_derivs, calc_Jf_θ, calc_f_θθ
 
 """
 Van der Pol oscillator dynamics for RHMC benchmarking.
@@ -132,6 +139,72 @@ function calc_Hfs_param(
 end
 
 """
+Component Hessians ∇²f_d (D symmetric matrices, each D×D).
+
+Returns the Hessian of each output component with respect to state:
+    ∇²f_d[i,j] = ∂²f_d/∂z_i∂z_j
+
+These are the matrices needed for the observed Hessian correction:
+    H_{x_{t-1},x_{t-1}}^{obs} = -F'SF + Σ_d (Sr)_d ∇²f_d
+
+Relationship to calc_Hfs_param output:
+    ∇²f_d[i,j] = Hf_i[d,j]
+where Hf_i = ∂(Jf[:,i])/∂z.
+"""
+function calc_dyn_hessians(
+    dyn::VanDerPolDynamicsParam{T}, z::SVector{2,T}, θ::SVector{1,T}
+) where {T}
+    Hf1, Hf2 = calc_Hfs_param(dyn, z, θ)
+
+    # ∇²f_1 (Hessian of first component f_u) - all zeros since f_u is linear
+    H_f1 = @SMatrix [
+        Hf1[1, 1] Hf1[1, 2]
+        Hf2[1, 1] Hf2[1, 2]
+    ]
+
+    # ∇²f_2 (Hessian of second component f_v) - symmetric
+    H_f2 = @SMatrix [
+        Hf1[2, 1] Hf1[2, 2]
+        Hf2[2, 1] Hf2[2, 2]
+    ]
+
+    return H_f1, H_f2
+end
+
+"""
+Component mixed Hessians ∇²_{z,θ} f_i (D matrices, each D×P).
+
+Returns the mixed Hessian of each output component with respect to state and parameters:
+    ∇²_{z,θ} f_i[j,p] = ∂²f_i/(∂z_j ∂θ_p)
+
+These are the matrices needed for the observed Hessian correction in the border block:
+    H_{x_{t-1},θ}^{obs} = Σ_i (Sr)_i ∇²_{z,θ} f_i
+
+Relationship to calc_Hf_θs output:
+    ∇²_{z,θ} f_i[j,p] = Hf_θ_j[i,p]
+where Hf_θ_j = ∂(f_θ)/∂z_j.
+"""
+function calc_mixed_hessians(
+    dyn::VanDerPolDynamicsParam{T}, z::SVector{2,T}, θ::SVector{1,T}
+) where {T}
+    Hf_θ_1, Hf_θ_2 = calc_Hf_θs(dyn, z, θ)
+
+    # ∇²_{z,θ} f_1 (mixed Hessian of first component f_u) - all zeros since f_u is linear in θ
+    H_mixed_f1 = @SMatrix [
+        Hf_θ_1[1, 1]
+        Hf_θ_2[1, 1]
+    ]
+
+    # ∇²_{z,θ} f_2 (mixed Hessian of second component f_v)
+    H_mixed_f2 = @SMatrix [
+        Hf_θ_1[2, 1]
+        Hf_θ_2[2, 1]
+    ]
+
+    return H_mixed_f1, H_mixed_f2
+end
+
+"""
 Mixed Hessians ∂²f/∂z_d∂θ (D matrices, each 2×P).
 These are needed for computing ∂G_{t,θ}/∂x_t^{(d)}.
 
@@ -207,6 +280,89 @@ function calc_f_θθ(
     ]
 
     return (df_θ_1,)
+end
+
+"""
+Third derivatives of component Hessians: ∂(∇²f_d)/∂z_c (D×D matrices for each d,c).
+
+Returns a tuple of D tuples, where result[d][c] = ∂(∇²f_d)/∂z_c.
+
+For VDP:
+- f₁ is linear, so all third derivatives are zero.
+- For f₂:
+    ∇²f₂ = [[δt·μ·(-2)·v, δt·μ·(-2u)], [δt·μ·(-2u), 0]]
+    ∂(∇²f₂)/∂u = [[0, -2·δt·μ], [-2·δt·μ, 0]]
+    ∂(∇²f₂)/∂v = [[-2·δt·μ, 0], [0, 0]]
+"""
+function calc_dyn_hessian_derivs(
+    dyn::VanDerPolDynamicsParam{T}, z::SVector{2,T}, θ::SVector{1,T}
+) where {T}
+    log_μ = θ[1]
+    μ = exp(log_μ)
+    δt = dyn.δt
+
+    Z = @SMatrix zeros(T, 2, 2)
+
+    # Component 1 (f_u is linear): all third derivatives are zero
+    dH_f1_du = Z
+    dH_f1_dv = Z
+
+    # Component 2 (f_v):
+    # ∂(∇²f₂)/∂u = [[0, -2·δt·μ], [-2·δt·μ, 0]]
+    dH_f2_du = @SMatrix [
+        zero(T) -2*δt*μ
+        -2*δt*μ zero(T)
+    ]
+
+    # ∂(∇²f₂)/∂v = [[-2·δt·μ, 0], [0, 0]]
+    dH_f2_dv = @SMatrix [
+        -2*δt*μ zero(T)
+        zero(T) zero(T)
+    ]
+
+    return ((dH_f1_du, dH_f1_dv), (dH_f2_du, dH_f2_dv))
+end
+
+"""
+Third derivatives of mixed Hessians: ∂(∇²_{z,θ}f_i)/∂z_d (D×P matrices for each i,d).
+
+Returns a tuple of D tuples, where result[i][d] = ∂(∇²_{z,θ}f_i)/∂z_d.
+
+For VDP:
+- f₁ is linear, so all third derivatives are zero.
+- For f₂:
+    ∇²_{z,θ}f₂ = [δt·μ·(-2u)·v; δt·μ·(1-u²)]
+    ∂(∇²_{z,θ}f₂)/∂u = [-2·δt·μ·v; -2·δt·μ·u]
+    ∂(∇²_{z,θ}f₂)/∂v = [-2·δt·μ·u; 0]
+"""
+function calc_mixed_hessian_derivs(
+    dyn::VanDerPolDynamicsParam{T}, z::SVector{2,T}, θ::SVector{1,T}
+) where {T}
+    u, v = z
+    log_μ = θ[1]
+    μ = exp(log_μ)
+    δt = dyn.δt
+
+    Z = @SMatrix zeros(T, 2, 1)
+
+    # Component 1 (f_u is linear): all third derivatives are zero
+    dMH_f1_du = Z
+    dMH_f1_dv = Z
+
+    # Component 2 (f_v):
+    # ∂(∇²_{z,θ}f₂)/∂u = [-2·δt·μ·v; -2·δt·μ·u]
+    dMH_f2_du = @SMatrix [
+        -2*δt*μ*v
+        -2*δt*μ*u
+    ]
+
+    # ∂(∇²_{z,θ}f₂)/∂v = [-2·δt·μ·u; 0]
+    dMH_f2_dv = @SMatrix [
+        -2*δt*μ*u
+        zero(T)
+    ]
+
+    return ((dMH_f1_du, dMH_f1_dv), (dMH_f2_du, dMH_f2_dv))
 end
 
 function calc_Q_param(dyn::VanDerPolDynamicsParam)
