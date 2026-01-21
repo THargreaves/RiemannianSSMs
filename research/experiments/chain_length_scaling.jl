@@ -1,6 +1,16 @@
+"""
+Chain length scaling experiment for Van der Pol oscillator model.
+
+This experiment varies N_obs (number of observations) to test how the different
+samplers scale with increasing chain length in the block-tridiagonal structure.
+"""
+
 using Distributions
 using LinearAlgebra
 using Printf
+
+BLAS.set_num_threads(1)
+
 using Random
 using Statistics
 using Plots
@@ -8,7 +18,6 @@ using StaticArrays
 
 using AbstractMCMC
 using AdvancedHMC
-using LogDensityProblems
 using MCMCDiagnosticTools
 
 using RiemannianSSMs
@@ -18,10 +27,6 @@ using RiemannianSSMs
 # ============================================================================
 
 SEED = 42
-
-# Model dimensions
-D = 2      # State dimension (u, v)
-P = 1      # Parameter dimension (log μ)
 
 # Time discretization
 δt = 0.1           # Euler step size
@@ -38,25 +43,23 @@ N_adapt = 1000
 # Model setup (constant across experiments)
 # ============================================================================
 
-# Prior for initial state
-μ0 = @SVector [1.0, 0.0]
-Σ0 = Diagonal(@SVector([0.1, 0.1]))
-prior = MvNormal(μ0, Σ0)
-
 # True parameter value
 μ_true = 1.0
 θ_true = @SVector [log(μ_true)]
 
-# Dynamics
-σ_u = 0.01
-σ_v = 0.1
-dyn = VanDerPolDynamicsParam(σ_u, σ_v, δt)
+# Create model using unified interface
+ssm_model = VanDerPolModel(;
+    δt=δt,
+    σ_u=0.01,
+    σ_v=0.1,
+    σ_obs=0.5,
+    μ0=SVector{2,Float64}(1.0, 0.0),
+    Σ0_diag=SVector{2,Float64}(0.1, 0.1),
+)
 
-# Observations
-σ_obs = 0.5
-obs = PartialLinearObservationParam(σ_obs)
-
-ssm = SSMParam(prior, dyn, obs)
+# Dimensions
+Dx = state_dim(ssm_model)
+Dp = param_dim(ssm_model)
 
 # Parameter prior
 prior_mean = @SVector [log(μ_true)]
@@ -65,80 +68,6 @@ prior_var = @SVector [4.0]
 # ============================================================================
 # Helper functions
 # ============================================================================
-
-function simulate(rng::AbstractRNG, ssm, θ, K::Int, obs_indices)
-    zs = Vector{SVector{2,Float64}}(undef, K)
-    ys = Vector{SVector{1,Float64}}(undef, length(obs_indices))
-
-    obs_idx = 1
-    for k in 1:K
-        if k == 1
-            z = SVector{2,Float64}(rand(rng, ssm.prior))
-        else
-            z =
-                f_param(ssm.dyn, zs[k - 1], θ) +
-                rand(rng, MvNormal(zeros(2), calc_Q_param(ssm.dyn)))
-        end
-        zs[k] = z
-
-        if k in obs_indices
-            y =
-                h_param(ssm.sensor, z, θ) +
-                rand(rng, MvNormal(zeros(1), calc_R_param(ssm.sensor)))
-            ys[obs_idx] = y
-            obs_idx += 1
-        end
-    end
-
-    return zs, ys
-end
-
-struct LogTargetDensityParamSparse{D,P,M,V,PM,PV,OI}
-    dim::Int
-    ssm::M
-    ys::V
-    prior_mean::PM
-    prior_prec::PV
-    obs_indices::OI
-end
-
-function LogTargetDensityParamSparse(
-    K::Int, D::Int, P::Int, ssm, ys, prior_mean, prior_var, obs_indices
-)
-    dim = K * D + P
-    prior_prec = SVector{P,Float64}(1 ./ prior_var)
-    return LogTargetDensityParamSparse{
-        D,P,typeof(ssm),typeof(ys),typeof(prior_mean),typeof(prior_prec),typeof(obs_indices)
-    }(
-        dim, ssm, ys, prior_mean, prior_prec, obs_indices
-    )
-end
-
-function LogDensityProblems.logdensity(p::LogTargetDensityParamSparse{D,P}, θ) where {D,P}
-    θ_blocks = to_bordered_block_vector(θ, Val(D), Val(P))
-    return calc_ll_param(
-        θ_blocks, p.ys, p.ssm, p.prior_mean, p.prior_prec; obs_indices=p.obs_indices
-    )
-end
-
-function LogDensityProblems.logdensity_and_gradient(
-    p::LogTargetDensityParamSparse{D,P}, θ
-) where {D,P}
-    θ_blocks = to_bordered_block_vector(θ, Val(D), Val(P))
-    ll = calc_ll_param(
-        θ_blocks, p.ys, p.ssm, p.prior_mean, p.prior_prec; obs_indices=p.obs_indices
-    )
-    grad = calc_ll_grad_param(
-        θ_blocks, p.ys, p.ssm, p.prior_mean, p.prior_prec; obs_indices=p.obs_indices
-    )
-    return ll, from_bordered_block_vector(grad)
-end
-
-LogDensityProblems.dimension(p::LogTargetDensityParamSparse) = p.dim
-
-function LogDensityProblems.capabilities(::Type{<:LogTargetDensityParamSparse})
-    return LogDensityProblems.LogDensityOrder{1}()
-end
 
 function compute_ess_stats(samples_array)
     ess_vals = ess(samples_array)
@@ -150,13 +79,10 @@ function compute_ess_stats(samples_array)
     )
 end
 
-function run_rhmc(
-    model, ℓπ, ssm, ys, D, P, K, prior_mean, prior_var, obs_indices, initial_θ
-)
-    metric = BorderedBlockTridiagonalRiemannianMetric(
-        ssm, ys, D, P, K, prior_mean, prior_var, obs_indices
+function run_rhmc(model, ssm_model, ys, K, prior_mean, prior_var, obs_indices, initial_θ)
+    metric = RiemannianMetric(
+        ssm_model, ys, K, prior_mean, prior_var; obs_indices=obs_indices
     )
-    hamiltonian = Hamiltonian(metric, ℓπ)
     initial_ϵ = 0.005
     integrator = AdaptiveGeneralizedLeapfrog(initial_ϵ; max_iters=7)
     kernel = HMCKernel(Trajectory{MultinomialTS}(integrator, GeneralisedNoUTurn()))
@@ -200,7 +126,6 @@ end
 
 function run_hmc_diagonal(model, initial_θ)
     metric = DiagEuclideanMetric(length(initial_θ))
-    hamiltonian = Hamiltonian(metric, model.logdensity)
     initial_ϵ = 0.001
     integrator = Leapfrog(initial_ϵ)
     kernel = HMCKernel(Trajectory{MultinomialTS}(integrator, GeneralisedNoUTurn()))
@@ -229,7 +154,6 @@ function run_hmc_empirical(model, initial_θ, rhmc_samples)
     emp_cov_sym = Symmetric(emp_cov)
 
     metric = DenseEuclideanMetric(emp_cov_sym)
-    hamiltonian = Hamiltonian(metric, model.logdensity)
     initial_ϵ = 0.001
     integrator = Leapfrog(initial_ϵ)
     kernel = HMCKernel(Trajectory{MultinomialTS}(integrator, GeneralisedNoUTurn()))
@@ -278,15 +202,17 @@ for N_obs in N_obs_values
 
     K = N_obs * K_y
     obs_indices = collect(K_y:K_y:K)
-    total_dim = D * K + P
+    total_dim = Dx * K + Dp
 
-    # Simulate data
-    zs_true, ys = simulate(rng, ssm, θ_true, K, obs_indices)
-    zs_true_block = BlockVector{Float64,2}(zs_true)
+    # Simulate data using unified interface
+    zs_true, ys = simulate(rng, ssm_model, θ_true, K; obs_indices=obs_indices)
+    zs_true_block = BlockVector{Float64,Dx}(zs_true)
 
-    # Setup model
-    ℓπ = LogTargetDensityParamSparse(K, D, P, ssm, ys, prior_mean, prior_var, obs_indices)
-    model = AdvancedHMC.LogDensityModel(ℓπ)
+    # Setup model using unified interface
+    ℓπ = RHMCLogDensity(
+        ssm_model, ys, K; prior_mean=prior_mean, prior_var=prior_var, obs_indices=obs_indices
+    )
+    adv_model = AdvancedHMC.LogDensityModel(ℓπ)
     initial_θ = vcat(from_block_vector(zs_true_block), collect(θ_true))
 
     results[N_obs] = Dict{Symbol,NamedTuple}()
@@ -294,7 +220,7 @@ for N_obs in N_obs_values
     # Run RHMC
     println("  Running RHMC...")
     rhmc_samples, rhmc_time = run_rhmc(
-        model, ℓπ, ssm, ys, D, P, K, prior_mean, prior_var, obs_indices, initial_θ
+        adv_model, ssm_model, ys, K, prior_mean, prior_var, obs_indices, initial_θ
     )
     rhmc_arr = samples_to_array(rhmc_samples, total_dim)
     rhmc_ess = compute_ess_stats(rhmc_arr)
@@ -311,7 +237,7 @@ for N_obs in N_obs_values
 
     # Run HMC Dense
     println("  Running HMC (Dense)...")
-    hmc_dense_samples, hmc_dense_time = run_hmc_dense(model, initial_θ)
+    hmc_dense_samples, hmc_dense_time = run_hmc_dense(adv_model, initial_θ)
     hmc_dense_arr = samples_to_array(hmc_dense_samples, total_dim)
     hmc_dense_ess = compute_ess_stats(hmc_dense_arr)
     results[N_obs][:hmc_dense] = (
@@ -327,7 +253,7 @@ for N_obs in N_obs_values
 
     # Run HMC Diagonal
     println("  Running HMC (Diagonal)...")
-    hmc_diag_samples, hmc_diag_time = run_hmc_diagonal(model, initial_θ)
+    hmc_diag_samples, hmc_diag_time = run_hmc_diagonal(adv_model, initial_θ)
     hmc_diag_arr = samples_to_array(hmc_diag_samples, total_dim)
     hmc_diag_ess = compute_ess_stats(hmc_diag_arr)
     results[N_obs][:hmc_diag] = (
@@ -343,7 +269,7 @@ for N_obs in N_obs_values
 
     # Run HMC with empirical covariance from RHMC
     println("  Running HMC (Empirical)...")
-    hmc_emp_samples, hmc_emp_time = run_hmc_empirical(model, initial_θ, rhmc_samples)
+    hmc_emp_samples, hmc_emp_time = run_hmc_empirical(adv_model, initial_θ, rhmc_samples)
     hmc_emp_arr = samples_to_array(hmc_emp_samples, total_dim)
     hmc_emp_ess = compute_ess_stats(hmc_emp_arr)
     results[N_obs][:hmc_empirical] = (
@@ -771,7 +697,7 @@ p_raw_ess = plot(
     plot_title="Raw ESS Comparison",
 )
 display(p_raw_ess)
-savefig(p_raw_ess, "vdp_benchmark_raw_ess.png")
+savefig(p_raw_ess, "../plots/vdp_benchmark_raw_ess.png")
 
 # Combined plot: ESS per second
 p_ess_per_sec = plot(
@@ -783,7 +709,7 @@ p_ess_per_sec = plot(
     plot_title="ESS per Second Comparison",
 )
 display(p_ess_per_sec)
-savefig(p_ess_per_sec, "vdp_benchmark_ess_per_sec.png")
+savefig(p_ess_per_sec, "../plots/vdp_benchmark_ess_per_sec.png")
 
 # Wall time plot
 rhmc_times = [results[n][:rhmc].time for n in N_obs_values]
@@ -829,11 +755,11 @@ plot!(
     color=:purple,
 )
 display(p_time)
-savefig(p_time, "vdp_benchmark_wall_time.png")
+savefig(p_time, "../plots/vdp_benchmark_wall_time.png")
 
 println("\nPlots saved to:")
-println("  - vdp_benchmark_raw_ess.png")
-println("  - vdp_benchmark_ess_per_sec.png")
-println("  - vdp_benchmark_wall_time.png")
+println("  - ../plots/vdp_benchmark_raw_ess.png")
+println("  - ../plots/vdp_benchmark_ess_per_sec.png")
+println("  - ../plots/vdp_benchmark_wall_time.png")
 
 println("\nDone!")
