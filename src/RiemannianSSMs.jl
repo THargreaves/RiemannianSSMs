@@ -5,12 +5,24 @@ using Random
 using StaticArrays
 using PDMats
 using SparseArrays
+using Distributions
+using SpecialFunctions: logfactorial
 
 # Include MCRHMC submodule first
 include("MCRHMC/MCRHMC.jl")
 
 include("block_types.jl")
 include("linalg.jl")
+
+# New unified interface
+include("exponential_families.jl")
+include("model_interface.jl")
+include("rhmc_unified.jl")
+
+# New model implementations
+include("models/van_der_pol.jl")
+
+# Legacy implementations (kept for backward compatibility)
 include("rhmc.jl")
 include("rhmc_param.jl")
 include("rhmc_poisson_param.jl")
