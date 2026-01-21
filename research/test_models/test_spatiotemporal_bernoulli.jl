@@ -45,7 +45,7 @@ K = N_obs * K_y    # Total number of latent states (100)
 obs_indices = collect(K_y:K_y:K)
 
 # Process noise (fixed)
-σ = 0.1
+σ = 0.05
 
 # Initial state prior scale
 s0 = 1.0
@@ -70,7 +70,7 @@ println("Kernel lengthscale ℓ = $(round(ℓ, digits=4))")
 # True parameter values (reasonable for the stabilized dynamics)
 κ_true = 2.0       # Coupling strength
 g_true = 1.5       # Reaction strength (stabilizing toward zero)
-a_true = 1.5       # Measurement sensitivity
+a_true = 10.0       # Measurement sensitivity
 b_true = 0.0       # Baseline intercept (p = 0.5 when x = 0)
 
 # θ = [log(κ), log(g), log(a), b]
@@ -131,7 +131,9 @@ for i in 1:Dx
     probs = [p_k[i] for p_k in p_all]
     obs_i = [y[i] for y in ys]
     plot!(p2, 1:K, probs; label="p_$i", lw=1.5, alpha=0.7)
-    scatter!(p2, obs_indices, obs_i; label="", color=i, ms=5, alpha=0.8, markerstrokewidth=0)
+    scatter!(
+        p2, obs_indices, obs_i; label="", color=i, ms=5, alpha=0.8, markerstrokewidth=0
+    )
 end
 vline!(p2, obs_indices; label="", color=:gray, alpha=0.2, linestyle=:dash)
 
@@ -149,7 +151,7 @@ println(
 
 # Parameter prior (diffuse Gaussian on log/real scale)
 prior_mean = @SVector [log(κ_true), log(g_true), log(a_true), b_true]  # Centered near true
-prior_var = @SVector [1.0, 1.0, 1.0, 4.0]  # Moderate variance
+prior_var = @SVector [2.0, 2.0, 2.0, 4.0]  # Moderate variance
 
 ℓπ = RHMCLogDensity(
     model, ys, K; prior_mean=prior_mean, prior_var=prior_var, obs_indices=obs_indices

@@ -10,7 +10,7 @@ For RHMC, we need A(η) and its first three derivatives.
 """
 
 export ExponentialFamily, ProductExponentialFamily
-export GaussianNatural, GaussianMean, PoissonNatural, BernoulliNatural
+export GaussianNatural, GaussianMean, GaussianPrecision, PoissonNatural, BernoulliNatural
 export log_partition, log_partition_d1, log_partition_d2, log_partition_d3
 export log_base_measure, sufficient_stat, log_likelihood, rand_obs, obs_eltype
 
@@ -169,6 +169,69 @@ function rand_obs(rng::AbstractRNG, ef::GaussianMean{T}, η) where {T}
 end
 
 obs_eltype(::GaussianMean{T}) where {T} = T
+
+# =============================================================================
+# Gaussian (zero mean, precision parameterization) - for stochastic volatility
+# =============================================================================
+
+"""
+    GaussianPrecision
+
+Zero-mean Gaussian distribution parameterized by precision τ = 1/σ².
+
+This is used for stochastic volatility models where observations are:
+    y | h ~ N(0, exp(h))
+
+The natural parameter is the precision τ = exp(-h), giving standard EF form:
+    log p(y|τ) = τ·T(y) - A(τ) + log h(y)
+
+where:
+- Natural parameter: τ = 1/σ² (precision)
+- Sufficient statistic: T(y) = -y²/2
+- Log-partition: A(τ) = -log(τ)/2
+- Base measure: h(y) = (2π)^{-1/2}
+
+Fisher information: S = A''(τ) = 1/(2τ²)
+
+Note: When using this with StateSpaceModel, the η function should return
+exp(-h) where h is the log-variance state.
+"""
+struct GaussianPrecision <: ExponentialFamily end
+
+function log_partition(::GaussianPrecision, τ)
+    return -log(τ) / 2
+end
+
+function log_partition_d1(::GaussianPrecision, τ)
+    return -1 / (2τ)
+end
+
+function log_partition_d2(::GaussianPrecision, τ)
+    return 1 / (2τ^2)
+end
+
+function log_partition_d3(::GaussianPrecision, τ)
+    return -1 / τ^3
+end
+
+function log_base_measure(::GaussianPrecision, y)
+    return -log(2π) / 2
+end
+
+function sufficient_stat(::GaussianPrecision, y)
+    return -y^2 / 2
+end
+
+function log_likelihood(::GaussianPrecision, τ, y)
+    return -τ * y^2 / 2 + log(τ) / 2 - log(2π) / 2
+end
+
+function rand_obs(rng::AbstractRNG, ::GaussianPrecision, τ)
+    σ = 1 / sqrt(τ)
+    return σ * randn(rng)
+end
+
+obs_eltype(::GaussianPrecision) = Float64
 
 # =============================================================================
 # Poisson
