@@ -202,7 +202,7 @@ hamiltonian = Hamiltonian(metric, ℓπ)
 initial_ϵ = 0.005
 integrator = AdaptiveGeneralizedLeapfrog(initial_ϵ; max_iters=7)
 kernel = HMCKernel(Trajectory{MultinomialTS}(integrator, GeneralisedNoUTurn()))
-adaptor = StepSizeAdaptor(0.95, integrator)
+adaptor = StepSizeAdaptor(0.9, integrator)
 rhmc = HMCSampler(kernel, metric, adaptor)
 
 N_samples = 5000
