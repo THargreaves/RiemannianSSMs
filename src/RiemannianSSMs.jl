@@ -19,24 +19,9 @@ include("exponential_families.jl")
 include("model_interface.jl")
 include("rhmc_unified.jl")
 
-# New model implementations
+# Model implementations
 include("models/van_der_pol.jl")
-
-# Legacy implementations (kept for backward compatibility)
-include("rhmc.jl")
-include("rhmc_param.jl")
-include("rhmc_poisson_param.jl")
-
-include("models/variable_restoring_force.jl")
-include("models/squared_landmark_distance.jl")
-include("models/variable_restoring_force_param.jl")
-include("models/squared_landmark_distance_param.jl")
-include("models/van_der_pol_param.jl")
-include("models/partial_linear_observation_param.jl")
-include("models/random_walk_dynamics_param.jl")
-include("models/poisson_observation_param.jl")
-include("models/fitzhugh_nagumo_param.jl")
-include("models/poisson_multi_channel_param.jl")
+include("models/random_walk_poisson.jl")
 
 # Kleppe's observed Hessian metric (uses MCRHMC submodule)
 include("kleppe_vdp.jl")

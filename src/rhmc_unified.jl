@@ -891,7 +891,8 @@ function simulate(
         obs_set = Set(obs_indices)
     end
 
-    observations = Vector{SVector{Dy,T}}(undef, n_obs)
+    YT = obs_eltype(ef)
+    observations = Vector{SVector{Dy,YT}}(undef, n_obs)
 
     obs_idx = 1
     @inbounds for k in 1:K

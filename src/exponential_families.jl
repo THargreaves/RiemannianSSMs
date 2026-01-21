@@ -12,7 +12,7 @@ For RHMC, we need A(η) and its first three derivatives.
 export ExponentialFamily, ProductExponentialFamily
 export GaussianNatural, GaussianMean, PoissonNatural, BernoulliNatural
 export log_partition, log_partition_d1, log_partition_d2, log_partition_d3
-export log_base_measure, sufficient_stat, log_likelihood, rand_obs
+export log_base_measure, sufficient_stat, log_likelihood, rand_obs, obs_eltype
 
 # =============================================================================
 # Abstract Type
@@ -48,6 +48,14 @@ end
 Sample an observation from the exponential family with natural parameter η.
 """
 function rand_obs end
+
+"""
+    obs_eltype(ef)
+
+Return the natural element type for observations from this exponential family.
+For Poisson this is Int (counts), for Gaussian this is Float64, etc.
+"""
+function obs_eltype end
 
 # =============================================================================
 # Gaussian (known variance)
@@ -97,6 +105,8 @@ function rand_obs(rng::AbstractRNG, ef::GaussianNatural{T}, η) where {T}
     μ = ef.σ² * η  # η = μ/σ², so μ = η*σ²
     return μ + sqrt(ef.σ²) * randn(rng, T)
 end
+
+obs_eltype(::GaussianNatural{T}) where {T} = T
 
 # For Gaussian, it's often more convenient to work with μ directly.
 # The Fisher information in terms of the mean is 1/σ².
@@ -158,6 +168,8 @@ function rand_obs(rng::AbstractRNG, ef::GaussianMean{T}, η) where {T}
     return η + sqrt(ef.σ²) * randn(rng, T)
 end
 
+obs_eltype(::GaussianMean{T}) where {T} = T
+
 # =============================================================================
 # Poisson
 # =============================================================================
@@ -202,8 +214,10 @@ end
 
 function rand_obs(rng::AbstractRNG, ::PoissonNatural, η)
     λ = exp(η)
-    return Float64(rand(rng, Poisson(λ)))
+    return rand(rng, Poisson(λ))
 end
+
+obs_eltype(::PoissonNatural) = Int
 
 # =============================================================================
 # Bernoulli
@@ -255,8 +269,10 @@ end
 
 function rand_obs(rng::AbstractRNG, ::BernoulliNatural, η)
     p = 1 / (1 + exp(-η))
-    return Float64(rand(rng, Bernoulli(p)))
+    return Int(rand(rng, Bernoulli(p)))
 end
+
+obs_eltype(::BernoulliNatural) = Int
 
 # =============================================================================
 # Product Exponential Family
@@ -366,47 +382,10 @@ end
 Sample from product distribution: independent samples for each component.
 """
 function rand_obs(
-    rng::AbstractRNG, pef::ProductExponentialFamily{Dy}, η::SVector{Dy,T}
-) where {Dy,T}
-    return SVector{Dy,T}(ntuple(m -> rand_obs(rng, pef.ef, η[m]), Val(Dy)))
+    rng::AbstractRNG, pef::ProductExponentialFamily{Dy}, η::SVector{Dy}
+) where {Dy}
+    YT = obs_eltype(pef)
+    return SVector{Dy,YT}(ntuple(m -> rand_obs(rng, pef.ef, η[m]), Val(Dy)))
 end
 
-# =============================================================================
-# Hessian Types for Clarity
-# =============================================================================
-
-export ComponentHessians, ComponentMixedHessians
-
-"""
-    ComponentHessians{N, D, T}
-
-Hessians of each component of a vector-valued function f: R^D → R^N.
-Entry `h[i]` is ∇²f_i, a D×D symmetric matrix.
-"""
-struct ComponentHessians{N,D,T,L}
-    hessians::NTuple{N,SMatrix{D,D,T,L}}
-end
-
-function ComponentHessians(hessians::NTuple{N,SMatrix{D,D,T,L}}) where {N,D,T,L}
-    return ComponentHessians{N,D,T,L}(hessians)
-end
-
-Base.getindex(ch::ComponentHessians, i::Int) = ch.hessians[i]
-Base.length(::ComponentHessians{N}) where {N} = N
-
-"""
-    ComponentMixedHessians{N, D, P, T}
-
-Mixed Hessians of each component of a vector-valued function f: R^D × R^P → R^N.
-Entry `h[i]` is ∇²_{x,θ}f_i, a D×P matrix.
-"""
-struct ComponentMixedHessians{N,D,P,T,L}
-    hessians::NTuple{N,SMatrix{D,P,T,L}}
-end
-
-function ComponentMixedHessians(hessians::NTuple{N,SMatrix{D,P,T,L}}) where {N,D,P,T,L}
-    return ComponentMixedHessians{N,D,P,T,L}(hessians)
-end
-
-Base.getindex(cmh::ComponentMixedHessians, i::Int) = cmh.hessians[i]
-Base.length(::ComponentMixedHessians{N}) where {N} = N
+obs_eltype(pef::ProductExponentialFamily) = obs_eltype(pef.ef)
