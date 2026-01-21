@@ -30,7 +30,8 @@ export analyze_symbolic, nnz_L
 
 export modified_cholesky, modified_cholesky!
 
-export get_L, get_D, reconstruct
+export get_L,
+    get_D, reconstruct, compute_regularization_sensitivities, diagnose_regularization
 
 export modified_cholesky_adjoint!, modified_cholesky_pullback, logdet_pullback
 

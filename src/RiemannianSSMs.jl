@@ -29,4 +29,7 @@ include("models/poisson_multi_channel_param.jl")
 # Kleppe's observed Hessian metric (uses MCRHMC submodule)
 include("kleppe_vdp.jl")
 
+# Adaptation for Riemannian HMC
+include("adaptation.jl")
+
 end

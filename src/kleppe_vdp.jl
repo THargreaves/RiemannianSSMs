@@ -12,7 +12,7 @@ Uses the MCRHMC submodule for modified Cholesky factorization and its derivative
 using AdvancedHMC
 using Distributions
 
-import AdvancedHMC: DualValue
+import AdvancedHMC: DualValue, get_regularization_sensitivities
 
 export ObservedHessianMetric
 export calc_observed_hessian, calc_observed_hessian_derivs
@@ -22,7 +22,8 @@ export calc_ll_observed, calc_ll_grad_observed
 # Metric Type
 # ============================================================================
 
-struct ObservedHessianMetric{T,D,P,SSM,YT,OI} <: AdvancedHMC.AbstractRiemannianMetric
+mutable struct ObservedHessianMetric{T,D,P,SSM,YT,OI} <:
+               AdvancedHMC.AbstractRiemannianMetric
     ssm::SSM
     ys::YT
     obs_indices::OI
@@ -31,6 +32,7 @@ struct ObservedHessianMetric{T,D,P,SSM,YT,OI} <: AdvancedHMC.AbstractRiemannianM
     prior_prec::Vector{T}      # Prior precision for parameters
     u::Vector{T}               # Regularization parameters for modified Cholesky
     symbolic::Any              # Cached symbolic factorization (or nothing)
+    last_factorization::Union{Nothing,MCRHMC.SparseLDLFactor{T,Int}}  # Cached factorization for adaptor
 end
 
 function ObservedHessianMetric(
@@ -48,7 +50,15 @@ function ObservedHessianMetric(
     n = K * D + P
     @assert length(u) == n "Regularization vector u must have length $n, got $(length(u))"
     return ObservedHessianMetric{T,D,P,typeof(ssm),typeof(ys),Vector{Int}}(
-        ssm, ys, obs_indices, K, collect(prior_mean), collect(prior_prec), u, nothing
+        ssm,
+        ys,
+        obs_indices,
+        K,
+        collect(prior_mean),
+        collect(prior_prec),
+        u,
+        nothing,
+        nothing,
     )
 end
 
@@ -906,6 +916,9 @@ function AdvancedHMC.rand_momentum(
     # Modified Cholesky factorization
     F = MCRHMC.modified_cholesky(G, metric.u, 0)
 
+    # Cache factorization for adaptation
+    metric.last_factorization = F
+
     # Sample Z ~ N(0, I)
     n = metric.K * D + P
     Z = randn(rng, n)
@@ -936,6 +949,9 @@ function AdvancedHMC.neg_energy(
 
     # Modified Cholesky factorization
     F = MCRHMC.modified_cholesky(G, metric.u, 0)
+
+    # Cache factorization for adaptation
+    metric.last_factorization = F
 
     # log|G| = sum(log(D_diag))
     logdetG = MCRHMC.logdet(F)
@@ -988,6 +1004,9 @@ function AdvancedHMC.∂H∂θ(
     # Modified Cholesky factorization
     F = MCRHMC.modified_cholesky(G, metric.u, 0)
 
+    # Cache factorization for adaptation
+    metric.last_factorization = F
+
     # Compute v = G^{-1} r (needed for quadform pullback)
     v = F \ collect(r)
 
@@ -1028,6 +1047,42 @@ function AdvancedHMC.∂H∂r(
     # Modified Cholesky factorization
     F = MCRHMC.modified_cholesky(G, metric.u, 0)
 
+    # Cache factorization for adaptation
+    metric.last_factorization = F
+
     # ∂H/∂r = G^{-1} r
     return F \ collect(r)
 end
+
+# ============================================================================
+# Adaptation Interface
+# ============================================================================
+
+"""
+    get_regularization_sensitivities(metric::ObservedHessianMetric)
+
+Get regularization sensitivities from the metric's cached factorization.
+Called by the integrator when a divergence is detected during fixed-point iteration.
+
+Returns a vector of sensitivities for each regularized dimension, or nothing
+if no factorization is cached.
+"""
+function get_regularization_sensitivities(metric::ObservedHessianMetric)
+    if metric.last_factorization !== nothing
+        return MCRHMC.compute_regularization_sensitivities(metric.last_factorization)
+    end
+    return nothing
+end
+
+"""
+    update_regularization!(metric::ObservedHessianMetric, u_new::Vector)
+
+Update the regularization parameters in the metric.
+Called by the adaptor after adjusting u values based on divergence rates.
+"""
+function update_regularization!(metric::ObservedHessianMetric, u_new::Vector)
+    metric.u .= u_new
+    return nothing
+end
+
+export get_regularization_sensitivities, update_regularization!

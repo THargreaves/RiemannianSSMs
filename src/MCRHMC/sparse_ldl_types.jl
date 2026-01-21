@@ -263,3 +263,92 @@ function quadform(F::SparseLDLFactor{Tv,Ti}, p::Vector{Tv}) where {Tv,Ti}
     val = Tv(0.5) * dot(p, v)
     return val, v
 end
+
+"""
+    compute_regularization_sensitivities(F::SparseLDLFactor)
+
+Compute sensitivity of each regularized diagonal to changes in the regularization parameter u.
+
+For each j > K (the regularized dimensions), computes:
+    |d/dz[1/sabs(z; u_j)]|_{z=D_raw[j]}| = |sabs'(D_raw[j], u[j])| / sabs(D_raw[j], u[j])²
+
+Higher sensitivity indicates that dimension contributes more to potential fixed-point
+iteration instability. Used by the u-adaptation scheme to determine which dimensions
+to adjust when divergences occur.
+
+Returns a vector of length (n - K) containing the sensitivities.
+"""
+function compute_regularization_sensitivities(F::SparseLDLFactor{Tv,Ti}) where {Tv,Ti}
+    K = F.K
+    n = size(F, 1)
+    n_reg = n - K
+    sensitivities = zeros(Tv, n_reg)
+
+    @inbounds for j in (K + 1):n
+        u_idx = j - K
+        raw_d = F.D_raw[j]
+        u_j = F.u[u_idx]
+        # Skip if inputs are invalid
+        if !isfinite(raw_d) || !isfinite(u_j) || u_j <= 0
+            sensitivities[u_idx] = zero(Tv)
+            continue
+        end
+        # |d/dz[1/sabs(z; u)]| = |sabs'(z;u)| / sabs(z;u)^2
+        sabs_val = sabs(raw_d, u_j)
+        sabs_d = sabs_deriv(raw_d, u_j)
+        s = abs(sabs_d) / (sabs_val * sabs_val)
+        # Guard against NaN/Inf in result
+        sensitivities[u_idx] = isfinite(s) ? s : zero(Tv)
+    end
+
+    return sensitivities
+end
+
+"""
+    diagnose_regularization(F::SparseLDLFactor; top_k=5)
+
+Diagnostic function to understand which dimensions need heavy regularization.
+Returns information about the top_k dimensions with highest sensitivity.
+
+For each problematic dimension, shows:
+- Permuted index (position in factorization)
+- Original index (position in unpermuted matrix)
+- D_raw value (diagonal before sabs)
+- u value (regularization parameter)
+- D value (diagonal after sabs)
+- Sensitivity
+"""
+function diagnose_regularization(F::SparseLDLFactor{Tv,Ti}; top_k::Int=5) where {Tv,Ti}
+    sens = compute_regularization_sensitivities(F)
+    K = F.K
+    n = size(F, 1)
+    perm = F.symbolic.perm
+
+    # Get top_k indices by sensitivity
+    top_indices = partialsortperm(sens, 1:min(top_k, length(sens)); rev=true)
+
+    diagnostics = []
+    for idx in top_indices
+        j = idx + K  # Permuted index (1-based, in factorization order)
+        orig_idx = perm[j]  # Original index before permutation
+        raw_d = F.D_raw[j]
+        u_j = F.u[idx]
+        d_j = F.D[j]
+        s = sens[idx]
+
+        push!(
+            diagnostics,
+            (;
+                perm_idx=j,
+                orig_idx=orig_idx,
+                D_raw=raw_d,
+                u=u_j,
+                D=d_j,
+                sensitivity=s,
+                regularization_active=(abs(raw_d) < u_j),
+            ),
+        )
+    end
+
+    return diagnostics
+end

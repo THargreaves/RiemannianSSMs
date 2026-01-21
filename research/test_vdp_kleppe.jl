@@ -17,6 +17,7 @@ using LogDensityProblems
 using MCMCDiagnosticTools
 
 using RiemannianSSMs
+using AdvancedHMC.Adaptation: getu
 
 # ============================================================================
 # Configuration
@@ -32,7 +33,7 @@ P = 1      # Parameter dimension (log μ)
 # Time discretization
 δt = 0.1           # Euler step size
 K_y = 10           # Latent steps between observations
-N_obs = 5         # Number of observations
+N_obs = 10         # Number of observations
 K = N_obs * K_y    # Total number of latent states (200)
 
 # Observation indices (1-indexed, every K_y-th state starting from K_y)
@@ -207,13 +208,14 @@ println("="^60)
 
 # Regularization parameter for modified Cholesky
 # u_i sets a lower bound on diagonal D_ii >= u_i
-# Needs to be large enough to handle negative eigenvalues from observed Hessian
+# Start small and let adaptation increase as needed (per Kleppe's recommendation)
 n = K * D + P
-u = fill(1e1, n)  # Larger regularization for stability
+u_init = fill(1e-5, n)  # Larger regularization for stability
+u_init[end] = 10.0
 
 println("\nSetting up Kleppe's Observed Hessian metric...")
 kleppe_metric = ObservedHessianMetric(
-    ssm, ys, Val(D), Val(P), K, prior_mean, prior_var, obs_indices, u
+    ssm, ys, Val(D), Val(P), K, prior_mean, prior_var, obs_indices, u_init
 )
 println(kleppe_metric)
 
@@ -226,17 +228,24 @@ kleppe_integrator = AdaptiveGeneralizedLeapfrog(initial_ϵ; max_iters=7)
 kleppe_kernel = HMCKernel(
     Trajectory{MultinomialTS}(kleppe_integrator, GeneralisedNoUTurn())
 )
-# Fixed integration length
-# kleppe_kernel = HMCKernel(
-#     Trajectory{MultinomialTS}(kleppe_integrator, FixedNSteps(10))
+
+# Create regularization adaptor for u parameters
+# reg_adaptor = RiemannianRegularizationAdaptor(
+#     u_init;
+#     γ=1.0,           # Adaptation scaling
+#     δ=0.05,           # Target 5% divergence rate
+#     window_size=10,   # Check every 50 samples
 # )
+
+# Create composite adaptor (step size + regularization)
+# kleppe_adaptor = RiemannianHMCAdaptor(StepSizeAdaptor(0.8, kleppe_integrator), reg_adaptor)
 kleppe_adaptor = StepSizeAdaptor(0.8, kleppe_integrator)
-# kleppe_adaptor = NoAdaptation()
+println("Adaptor: ", kleppe_adaptor)
 kleppe_sampler = HMCSampler(kleppe_kernel, kleppe_metric, kleppe_adaptor)
 
 # For quick testing, use small sample sizes
-N_samples = 1000
-N_adapt = 500
+N_samples = 2000
+N_adapt = 1000
 
 println("\nRunning Kleppe RHMC (N_samples=$N_samples, N_adapt=$N_adapt)...")
 kleppe_chains = AbstractMCMC.sample(
@@ -249,6 +258,12 @@ kleppe_chains = AbstractMCMC.sample(
     progress=true,
 );
 kleppe_samples = [s.z.θ for s in kleppe_chains];
+
+# Print final regularization parameters
+# final_u = getu(reg_adaptor)
+# println(
+#     "Final regularization u: min=$(minimum(final_u)), max=$(maximum(final_u)), mean=$(mean(final_u))",
+# )
 
 # Print total acceptance rate
 accept = [s.stat.is_accept for s in kleppe_chains]
