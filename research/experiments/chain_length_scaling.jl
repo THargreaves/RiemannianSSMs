@@ -210,7 +210,12 @@ for N_obs in N_obs_values
 
     # Setup model using unified interface
     ℓπ = RHMCLogDensity(
-        ssm_model, ys, K; prior_mean=prior_mean, prior_var=prior_var, obs_indices=obs_indices
+        ssm_model,
+        ys,
+        K;
+        prior_mean=prior_mean,
+        prior_var=prior_var,
+        obs_indices=obs_indices,
     )
     adv_model = AdvancedHMC.LogDensityModel(ℓπ)
     initial_θ = vcat(from_block_vector(zs_true_block), collect(θ_true))
