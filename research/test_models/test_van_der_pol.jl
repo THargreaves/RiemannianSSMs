@@ -477,7 +477,8 @@ if RUN_HMC_EMPIRICAL
 
         println("\nRunning HMC with empirical covariance from RHMC samples...")
         rhmc_samples_for_cov = results["RHMC"].samples
-        emp_cov = Symmetric(cov(hcat(rhmc_samples_for_cov...)') + 1e-3 * I)
+        emp_cov = cov(hcat(rhmc_samples_for_cov...)') + 1e-3 * I
+        emp_cov = (emp_cov + emp_cov') / 2  # Ensure symmetry
         hmc_emp_metric = AdvancedHMC.DenseEuclideanMetric(emp_cov)
         hmc_emp_integrator = Leapfrog(0.001)
         hmc_emp_kernel = HMCKernel(
