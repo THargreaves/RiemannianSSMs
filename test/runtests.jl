@@ -774,149 +774,119 @@ end
 ### KLEPPE OBSERVED HESSIAN TESTS ###
 #####################################
 
-@testitem "Kleppe: calc_observed_hessian symmetry" begin
+@testitem "Kleppe: calc_observed_hessian_unified symmetry" begin
     using RiemannianSSMs
     using LinearAlgebra
     using SparseArrays
-    using Distributions
     using StaticArrays
     using StableRNGs
 
     rng = StableRNG(1234)
 
-    # Small test case
-    D = 2
-    P = 1
     K = 5
 
-    δt = 0.1
-    σ_u = 0.1  # Use larger noise for numerical stability
-    σ_v = 0.1
-    dyn = VanDerPolDynamicsParam(σ_u, σ_v, δt)
+    model = VanDerPolModel(;
+        δt=0.1,
+        σ_u=0.1,
+        σ_v=0.1,
+        σ_obs=0.5,
+        μ0=SVector{2,Float64}(1.0, 0.0),
+        Σ0_diag=SVector{2,Float64}(0.1, 0.1),
+    )
 
-    σ_obs = 0.5
-    obs = PartialLinearObservationParam(σ_obs)
-
-    μ0 = @SVector [1.0, 0.0]
-    Σ0 = Diagonal(@SVector([0.1, 0.1]))
-    prior = MvNormal(μ0, Σ0)
-    ssm = SSMParam(prior, dyn, obs)
-
-    prior_prec = [0.25]
+    prior_prec = @SVector [0.25]
     obs_indices = [2, 4]
 
-    # Random state vector
-    z = rand(rng, K * D + P)
+    ys = [rand(rng, SVector{1,Float64}) for _ in 1:length(obs_indices)]
 
-    G = calc_observed_hessian(z, ssm, K, Val(D), Val(P), prior_prec, obs_indices)
+    z = rand(rng, K * 2 + 1)
+
+    G = calc_observed_hessian_unified(z, model, ys, K, prior_prec, obs_indices)
     G_dense = Matrix(G)
 
-    # Check symmetry
     @test maximum(abs.(G_dense .- G_dense')) < 1e-12
 end
 
-@testitem "Kleppe: calc_observed_hessian vs finite differences" begin
+@testitem "Kleppe: calc_observed_hessian_unified vs finite differences" begin
     using RiemannianSSMs
     using LinearAlgebra
     using SparseArrays
-    using Distributions
     using StaticArrays
     using FiniteDiff
     using StableRNGs
 
     rng = StableRNG(1234)
 
-    D = 2
-    P = 1
     K = 4
 
-    δt = 0.1
-    σ_u = 0.1
-    σ_v = 0.1
-    dyn = VanDerPolDynamicsParam(σ_u, σ_v, δt)
+    model = VanDerPolModel(;
+        δt=0.1,
+        σ_u=0.1,
+        σ_v=0.1,
+        σ_obs=0.5,
+        μ0=SVector{2,Float64}(1.0, 0.0),
+        Σ0_diag=SVector{2,Float64}(0.1, 0.1),
+    )
 
-    σ_obs = 0.5
-    obs = PartialLinearObservationParam(σ_obs)
-
-    μ0 = @SVector [1.0, 0.0]
-    Σ0 = Diagonal(@SVector([0.1, 0.1]))
-    prior = MvNormal(μ0, Σ0)
-    ssm = SSMParam(prior, dyn, obs)
-    ys = [rand(rng, SVector{1,Float64}) for _ in 1:2]
-
-    prior_prec = [0.25]
     obs_indices = [2, 4]
+    ys = [rand(rng, SVector{1,Float64}) for _ in 1:length(obs_indices)]
 
-    # Random state vector
-    z = rand(rng, K * D + P)
+    prior_mean = @SVector [0.0]
+    prior_prec = @SVector [0.25]
 
-    # Compute analytical observed Hessian (negative Hessian of log-likelihood)
-    G = calc_observed_hessian(z, ssm, K, Val(D), Val(P), prior_prec, obs_indices)
+    z = rand(rng, K * 2 + 1)
+
+    G = calc_observed_hessian_unified(z, model, ys, K, prior_prec, obs_indices)
     G_dense = Matrix(G)
 
-    # Compute numerical Hessian of negative log-likelihood
     function neg_ll_fn(z_vec)
-        z_blocks = to_bordered_block_vector(z, Val(D), Val(P))
-        # return -calc_ll(z_blocks, ssm, K, D, P, prior_prec, obs_indices)
-        return -calc_ll_observed(
-            z_vec, ys, ssm, K, Val(D), Val(P), [0.0], prior_prec, obs_indices
+        return -calc_ll_observed_unified(
+            z_vec, model, ys, K, prior_mean, prior_prec, obs_indices
         )
     end
 
     H_numerical = FiniteDiff.finite_difference_hessian(neg_ll_fn, z)
 
-    # Compare
     max_diff = maximum(abs.(G_dense .- H_numerical))
     @test max_diff < 1e-5
 end
 
-@testitem "Kleppe: calc_ll_grad_observed vs finite differences" begin
+@testitem "Kleppe: calc_ll_grad_observed_unified vs finite differences" begin
     using RiemannianSSMs
     using LinearAlgebra
     using SparseArrays
-    using Distributions
     using StaticArrays
     using FiniteDiff
     using StableRNGs
 
     rng = StableRNG(1234)
 
-    D = 2
-    P = 1
     K = 4
 
-    δt = 0.1
-    σ_u = 0.1
-    σ_v = 0.1
-    dyn = VanDerPolDynamicsParam(σ_u, σ_v, δt)
-
-    σ_obs = 0.5
-    obs = PartialLinearObservationParam(σ_obs)
-
-    μ0 = @SVector [1.0, 0.0]
-    Σ0 = Diagonal(@SVector([0.1, 0.1]))
-    prior = MvNormal(μ0, Σ0)
-    ssm = SSMParam(prior, dyn, obs)
-
-    prior_mean = [0.0]
-    prior_prec = [0.25]
-    obs_indices = [2, 4]
-
-    # Random state vector
-    z = rand(rng, K * D + P)
-
-    # Generate some observations
-    ys = [rand(rng, SVector{1,Float64}) for _ in 1:length(obs_indices)]
-
-    # Compute analytical log-likelihood gradient
-    grad_analytical = calc_ll_grad_observed(
-        z, ys, ssm, K, Val(D), Val(P), prior_mean, prior_prec, obs_indices
+    model = VanDerPolModel(;
+        δt=0.1,
+        σ_u=0.1,
+        σ_v=0.1,
+        σ_obs=0.5,
+        μ0=SVector{2,Float64}(1.0, 0.0),
+        Σ0_diag=SVector{2,Float64}(0.1, 0.1),
     )
 
-    # Compute numerical gradient
+    prior_mean = @SVector [0.0]
+    prior_prec = @SVector [0.25]
+    obs_indices = [2, 4]
+
+    z = rand(rng, K * 2 + 1)
+
+    ys = [rand(rng, SVector{1,Float64}) for _ in 1:length(obs_indices)]
+
+    grad_analytical = calc_ll_grad_observed_unified(
+        z, model, ys, K, prior_mean, prior_prec, obs_indices
+    )
+
     function ll_fn(z_vec)
-        return calc_ll_observed(
-            z_vec, ys, ssm, K, Val(D), Val(P), prior_mean, prior_prec, obs_indices
+        return calc_ll_observed_unified(
+            z_vec, model, ys, K, prior_mean, prior_prec, obs_indices
         )
     end
 
@@ -925,74 +895,63 @@ end
     @test maximum(abs.(grad_analytical .- grad_numerical)) < 1e-6
 end
 
-@testitem "Kleppe: calc_observed_hessian_derivs vs finite differences" begin
+@testitem "Kleppe: calc_observed_hessian_derivs_unified vs finite differences" begin
     using RiemannianSSMs
     using LinearAlgebra
     using SparseArrays
-    using Distributions
     using StaticArrays
     using FiniteDiff
     using StableRNGs
 
     rng = StableRNG(1234)
 
-    D = 2
-    P = 1
-    K = 3  # Small for speed
+    K = 3
 
-    δt = 0.1
-    σ_u = 0.1
-    σ_v = 0.1
-    dyn = VanDerPolDynamicsParam(σ_u, σ_v, δt)
+    model = VanDerPolModel(;
+        δt=0.1,
+        σ_u=0.1,
+        σ_v=0.1,
+        σ_obs=0.5,
+        μ0=SVector{2,Float64}(1.0, 0.0),
+        Σ0_diag=SVector{2,Float64}(0.1, 0.1),
+    )
 
-    σ_obs = 0.5
-    obs = PartialLinearObservationParam(σ_obs)
-
-    μ0 = @SVector [1.0, 0.0]
-    Σ0 = Diagonal(@SVector([0.1, 0.1]))
-    prior = MvNormal(μ0, Σ0)
-    ssm = SSMParam(prior, dyn, obs)
-
-    prior_prec = [0.25]
+    prior_prec = @SVector [0.25]
     obs_indices = [2]
 
-    z = rand(rng, K * D + P)
-    n = K * D + P
+    ys = [rand(rng, SVector{1,Float64}) for _ in 1:length(obs_indices)]
 
-    # Compute analytical derivatives
-    dGs_analytical = calc_observed_hessian_derivs(z, ssm, K, Val(D), Val(P), obs_indices)
+    z = rand(rng, K * 2 + 1)
+    n = K * 2 + 1
 
-    # Check against finite differences for each component
+    dGs_analytical = calc_observed_hessian_derivs_unified(z, model, K, obs_indices)
+
     ε = 1e-6
     max_errors = Float64[]
 
     dGs_numerical = Vector{SparseMatrixCSC{Float64,Int}}(undef, n)
-    max_errors = Float64[]
 
     for i in 1:n
-        # Numerical derivative via finite differences
         z_plus = copy(z)
         z_plus[i] += ε
         z_minus = copy(z)
         z_minus[i] -= ε
 
-        G_plus = calc_observed_hessian(
-            z_plus, ssm, K, Val(D), Val(P), prior_prec, obs_indices
+        G_plus = calc_observed_hessian_unified(
+            z_plus, model, ys, K, prior_prec, obs_indices
         )
-        G_minus = calc_observed_hessian(
-            z_minus, ssm, K, Val(D), Val(P), prior_prec, obs_indices
+        G_minus = calc_observed_hessian_unified(
+            z_minus, model, ys, K, prior_prec, obs_indices
         )
 
         dG_numerical = (G_plus - G_minus) / (2ε)
         dGs_numerical[i] = dG_numerical
 
-        # Compare
         diff = abs.(dGs_analytical[i] .- dG_numerical)
         max_error = maximum(diff)
         push!(max_errors, max_error)
     end
 
-    # All errors should be small
     @test maximum(max_errors) < 1e-4
 end
 
@@ -1014,22 +973,18 @@ end
     P = 1
     K = 3
 
-    δt = 0.1
-    σ_u = 0.1  # Larger noise for stability
-    σ_v = 0.1
-    dyn = VanDerPolDynamicsParam(σ_u, σ_v, δt)
-
-    σ_obs = 0.5
-    obs = PartialLinearObservationParam(σ_obs)
-
-    μ0 = @SVector [1.0, 0.0]
-    Σ0 = Diagonal(@SVector([0.1, 0.1]))
-    prior = MvNormal(μ0, Σ0)
-    ssm = SSMParam(prior, dyn, obs)
+    model = VanDerPolModel(;
+        δt=0.1,
+        σ_u=0.1,
+        σ_v=0.1,
+        σ_obs=0.5,
+        μ0=SVector{2,Float64}(1.0, 0.0),
+        Σ0_diag=SVector{2,Float64}(0.1, 0.1),
+    )
 
     prior_mean = @SVector [0.0]
     prior_var = @SVector [4.0]
-    prior_prec_vec = Vector(1.0 ./ prior_var)
+    prior_prec = @SVector [0.25]
     obs_indices = [2]
     n = K * D + P
 
@@ -1040,66 +995,65 @@ end
     u = fill(0.5, n)
 
     # Create metric and Hamiltonian
-    metric = ObservedHessianMetric(
-        ssm, ys, Val(D), Val(P), K, prior_mean, prior_var, obs_indices, u
+    metric = GeneralizedObservedHessianMetric(
+        model, ys, K, prior_mean, prior_var; obs_indices=obs_indices, u_init=u
     )
 
-    struct LogTargetDensityParamSparse{D,P,M,V,PM,PV,OI}
+    struct LogTargetDensityUnified{Dx,Dp,M,V,PM,PP,OI}
         dim::Int
-        ssm::M
+        model::M
         ys::V
+        K::Int
         prior_mean::PM
-        prior_prec::PV
+        prior_prec::PP
         obs_indices::OI
     end
 
-    function LogTargetDensityParamSparse(
-        K::Int, D::Int, P::Int, ssm, ys, prior_mean, prior_var, obs_indices
-    )
-        dim = K * D + P
-        prior_prec = SVector{P,Float64}(1 ./ prior_var)
-        return LogTargetDensityParamSparse{
-            D,
-            P,
-            typeof(ssm),
+    function LogTargetDensityUnified(
+        model::StateSpaceModel{Dx,Dy,Dp}, ys, K::Int, prior_mean, prior_var, obs_indices
+    ) where {Dx,Dy,Dp}
+        dim = K * Dx + Dp
+        prior_prec = SVector{Dp,Float64}(1 ./ prior_var)
+        return LogTargetDensityUnified{
+            Dx,
+            Dp,
+            typeof(model),
             typeof(ys),
             typeof(prior_mean),
             typeof(prior_prec),
             typeof(obs_indices),
         }(
-            dim, ssm, ys, prior_mean, prior_prec, obs_indices
+            dim, model, ys, K, prior_mean, prior_prec, obs_indices
         )
     end
 
     function LogDensityProblems.logdensity(
-        p::LogTargetDensityParamSparse{D,P}, θ
-    ) where {D,P}
-        θ_blocks = to_bordered_block_vector(θ, Val(D), Val(P))
-        return calc_ll_param(
-            θ_blocks, p.ys, p.ssm, p.prior_mean, p.prior_prec; obs_indices=p.obs_indices
+        p::LogTargetDensityUnified{Dx,Dp}, z
+    ) where {Dx,Dp}
+        return calc_ll_observed_unified(
+            z, p.model, p.ys, p.K, p.prior_mean, p.prior_prec, p.obs_indices
         )
     end
 
     function LogDensityProblems.logdensity_and_gradient(
-        p::LogTargetDensityParamSparse{D,P}, θ
-    ) where {D,P}
-        θ_blocks = to_bordered_block_vector(θ, Val(D), Val(P))
-        ll = calc_ll_param(
-            θ_blocks, p.ys, p.ssm, p.prior_mean, p.prior_prec; obs_indices=p.obs_indices
+        p::LogTargetDensityUnified{Dx,Dp}, z
+    ) where {Dx,Dp}
+        ll = calc_ll_observed_unified(
+            z, p.model, p.ys, p.K, p.prior_mean, p.prior_prec, p.obs_indices
         )
-        grad = calc_ll_grad_param(
-            θ_blocks, p.ys, p.ssm, p.prior_mean, p.prior_prec; obs_indices=p.obs_indices
+        grad = calc_ll_grad_observed_unified(
+            z, p.model, p.ys, p.K, p.prior_mean, p.prior_prec, p.obs_indices
         )
-        return ll, from_bordered_block_vector(grad)
+        return ll, grad
     end
 
-    LogDensityProblems.dimension(p::LogTargetDensityParamSparse) = p.dim
+    LogDensityProblems.dimension(p::LogTargetDensityUnified) = p.dim
 
-    function LogDensityProblems.capabilities(::Type{<:LogTargetDensityParamSparse})
+    function LogDensityProblems.capabilities(::Type{<:LogTargetDensityUnified})
         return LogDensityProblems.LogDensityOrder{1}()
     end
 
-    ℓπ = LogTargetDensityParamSparse(K, D, P, ssm, ys, prior_mean, prior_var, obs_indices)
+    ℓπ = LogTargetDensityUnified(model, ys, K, prior_mean, prior_var, obs_indices)
 
     h = Hamiltonian(metric, ℓπ)
 
@@ -1115,22 +1069,12 @@ end
     function hamiltonian_fn(z_vec)
         # Potential energy: -log π(z)
         U =
-            -calc_ll_observed(
-                z_vec,
-                ys,
-                ssm,
-                K,
-                Val(D),
-                Val(P),
-                collect(prior_mean),
-                prior_prec_vec,
-                obs_indices,
+            -calc_ll_observed_unified(
+                z_vec, model, ys, K, prior_mean, prior_prec, obs_indices
             )
 
         # Kinetic energy: 0.5 * log|G| + 0.5 * r' G^{-1} r
-        G = calc_observed_hessian(
-            z_vec, ssm, K, Val(D), Val(P), prior_prec_vec, obs_indices
-        )
+        G = calc_observed_hessian_unified(z_vec, model, ys, K, prior_prec, obs_indices)
         F = MCRHMC.modified_cholesky(G, u, 0)
         logdetG = MCRHMC.logdet(F)
         v = F \ r
@@ -1166,29 +1110,28 @@ end
     P = 1
     K = 3
 
-    δt = 0.1
-    σ_u = 0.1
-    σ_v = 0.1
-    dyn = VanDerPolDynamicsParam(σ_u, σ_v, δt)
+    model = VanDerPolModel(;
+        δt=0.1,
+        σ_u=0.1,
+        σ_v=0.1,
+        σ_obs=0.5,
+        μ0=SVector{2,Float64}(1.0, 0.0),
+        Σ0_diag=SVector{2,Float64}(0.1, 0.1),
+    )
 
-    σ_obs = 0.5
-    obs = PartialLinearObservationParam(σ_obs)
-
-    μ0 = @SVector [1.0, 0.0]
-    Σ0 = Diagonal(@SVector([0.1, 0.1]))
-    prior = MvNormal(μ0, Σ0)
-    ssm = SSMParam(prior, dyn, obs)
-
-    prior_prec = [0.25]
+    prior_prec = @SVector [0.25]
     obs_indices = [2]
     n = K * D + P
+
+    # Generate observations
+    ys = [rand(rng, SVector{1,Float64}) for _ in 1:length(obs_indices)]
 
     z = rand(rng, n)
     r = rand(rng, n)
     u = fill(0.5, n)
 
     # Compute G and its factorization
-    G = calc_observed_hessian(z, ssm, K, Val(D), Val(P), prior_prec, obs_indices)
+    G = calc_observed_hessian_unified(z, model, ys, K, prior_prec, obs_indices)
     F = MCRHMC.modified_cholesky(G, u, 0)
     v = F \ r
 
@@ -1197,7 +1140,7 @@ end
     H_grad_dense = Matrix(H_grad)
 
     # Compute dGs
-    dGs = calc_observed_hessian_derivs(z, ssm, K, Val(D), Val(P), obs_indices)
+    dGs = calc_observed_hessian_derivs_unified(z, model, K, obs_indices)
 
     # Compute kinetic gradient using sparse_trace_symmetric
     kinetic_grad_sparse = zeros(n)
@@ -1207,9 +1150,7 @@ end
 
     # Compute kinetic gradient using dense operations for reference
     function kinetic_energy(z_vec)
-        G_pert = calc_observed_hessian(
-            z_vec, ssm, K, Val(D), Val(P), prior_prec, obs_indices
-        )
+        G_pert = calc_observed_hessian_unified(z_vec, model, ys, K, prior_prec, obs_indices)
         F_pert = MCRHMC.modified_cholesky(G_pert, u, 0)
         logdetG = MCRHMC.logdet(F_pert)
         v_pert = F_pert \ r

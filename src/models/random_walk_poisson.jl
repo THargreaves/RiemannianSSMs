@@ -192,3 +192,59 @@ function DDη_x_θ(::RandomWalkPoissonModel{T}, x::SVector{2,T}, θ::SVector{3,T
     dDη_x_db = @SMatrix [zero(T) zero(T)]
     return (dDη_x_da1, dDη_x_da2, dDη_x_db)
 end
+
+# =============================================================================
+# Third-Order Dynamics Derivatives (all zeros since f is linear)
+# =============================================================================
+
+"""
+Third derivatives of dynamics: ∂³f/∂x_c∂x_d∂x_j. All zeros since f(x,θ) = x is linear.
+"""
+function D3f_xxx(::RandomWalkPoissonModel{T}, x::SVector{2,T}, θ::SVector{3,T}) where {T}
+    Z = @SMatrix zeros(T, 2, 2)
+    return ((Z, Z), (Z, Z))  # Dx × Dx nested tuples
+end
+
+"""
+Third derivatives: ∂³f/∂x_c∂x_d∂θ_p. All zeros since f doesn't depend on θ.
+"""
+function D3f_xxθ(::RandomWalkPoissonModel{T}, x::SVector{2,T}, θ::SVector{3,T}) where {T}
+    Z = @SMatrix zeros(T, 2, 3)
+    return ((Z, Z), (Z, Z))  # Dx × Dx nested tuples of Dx × Dp matrices
+end
+
+"""
+Third derivatives: ∂³f/∂x_c∂θ_p∂θ_q. All zeros since f doesn't depend on θ.
+"""
+function D3f_xθθ(::RandomWalkPoissonModel{T}, x::SVector{2,T}, θ::SVector{3,T}) where {T}
+    Z = @SMatrix zeros(T, 2, 3)
+    return ((Z, Z, Z), (Z, Z, Z))  # Dx × Dp nested tuples
+end
+
+"""
+Third derivatives: ∂³f/∂θ_p∂θ_q∂θ_r. All zeros since f doesn't depend on θ.
+"""
+function D3f_θθθ(::RandomWalkPoissonModel{T}, x::SVector{2,T}, θ::SVector{3,T}) where {T}
+    Z = @SMatrix zeros(T, 2, 3)
+    return ((Z, Z, Z), (Z, Z, Z), (Z, Z, Z))  # Dp × Dp nested tuples
+end
+
+# =============================================================================
+# Third-Order Observation Derivatives (all zeros since η is linear in x and θ)
+# =============================================================================
+
+"""
+Third derivatives of observation: ∂³η/∂x_c∂x_d∂x_j. All zeros since η is linear in x.
+"""
+function D3η_xxx(::RandomWalkPoissonModel{T}, x::SVector{2,T}, θ::SVector{3,T}) where {T}
+    Z = @SMatrix zeros(T, 1, 2)
+    return ((Z, Z), (Z, Z))  # Dx × Dx nested tuples of Dy × Dx matrices
+end
+
+"""
+Third derivatives of observation: ∂³η/∂x_c∂x_d∂θ_p. All zeros since D2η_xx = 0.
+"""
+function D3η_xxθ(::RandomWalkPoissonModel{T}, x::SVector{2,T}, θ::SVector{3,T}) where {T}
+    Z = @SMatrix zeros(T, 1, 3)
+    return ((Z, Z), (Z, Z))  # Dx × Dx nested tuples of Dy × Dp matrices
+end

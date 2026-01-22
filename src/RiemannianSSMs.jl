@@ -29,7 +29,7 @@ include("models/lgcp_arp.jl")
 include("models/lgcp_arp_linear.jl")
 
 # Kleppe's observed Hessian metric (uses MCRHMC submodule)
-include("kleppe_vdp.jl")
+include("kleppe_unified.jl")
 
 # Adaptation for Riemannian HMC
 include("adaptation.jl")

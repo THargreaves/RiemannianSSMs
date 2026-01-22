@@ -11,12 +11,14 @@ Models are defined as subtypes of `StateSpaceModel{Dx, Dy, Dp}` where:
 - Dp: parameter dimension
 
 Each model must implement methods for the dynamics function f, observation natural
-parameter function η, and their derivatives up to second order.
+parameter function η, and their derivatives up to third order (for observed Hessian RHMC).
 """
 
 export StateSpaceModel
 export f, Df_x, Df_θ, D2f_xx, D2f_xθ, D2f_θθ, DDf_x_θ
+export D3f_xxx, D3f_xxθ, D3f_xθθ, D3f_θθθ
 export η, Dη_x, Dη_θ, D2η_xx, D2η_xθ, D2η_θθ, DDη_x_θ
+export D3η_xxx, D3η_xxθ
 export dynamics_covariance, dynamics_covariance_inv, initial_prior, observation_family
 export state_dim, obs_dim, param_dim
 
@@ -102,6 +104,58 @@ Returns Dp matrices, each Dx × Dx.
 function DDf_x_θ end
 
 # =============================================================================
+# Third-Order Dynamics Derivatives (for Observed Hessian RHMC)
+# =============================================================================
+
+"""
+    D3f_xxx(model, x::SVector{Dx}, θ::SVector{Dp}) → NTuple{Dx, NTuple{Dx, SMatrix{Dx, Dx}}}
+
+Third derivatives of dynamics w.r.t. state: ∂³f/∂x_c∂x_d∂x_j for all c, d, j.
+
+Returns Dx tuples (one per input component c), each containing Dx matrices (one per d).
+Entry [i, j] of matrix (c, d) is ∂³f_i/(∂x_c ∂x_d ∂x_j).
+
+These are used in observed Hessian RHMC for computing ∂(∇²f_output)/∂x.
+"""
+function D3f_xxx end
+
+"""
+    D3f_xxθ(model, x::SVector{Dx}, θ::SVector{Dp}) → NTuple{Dx, NTuple{Dx, SMatrix{Dx, Dp}}}
+
+Third derivatives: ∂³f/∂x_c∂x_d∂θ_p for all c, d, p.
+
+Returns Dx tuples (one per input component c), each containing Dx matrices (one per d).
+Entry [i, p] of matrix (c, d) is ∂³f_i/(∂x_c ∂x_d ∂θ_p).
+
+These are used in observed Hessian RHMC for computing ∂(∇²_{x,θ}f)/∂x.
+"""
+function D3f_xxθ end
+
+"""
+    D3f_xθθ(model, x::SVector{Dx}, θ::SVector{Dp}) → NTuple{Dx, NTuple{Dp, SMatrix{Dx, Dp}}}
+
+Third derivatives: ∂³f/∂x_c∂θ_p∂θ_q for all c, p, q.
+
+Returns Dx tuples (one per input component c), each containing Dp matrices (one per p).
+Entry [i, q] of matrix (c, p) is ∂³f_i/(∂x_c ∂θ_p ∂θ_q).
+
+These are used in observed Hessian RHMC for computing ∂(f_θθ)/∂x.
+"""
+function D3f_xθθ end
+
+"""
+    D3f_θθθ(model, x::SVector{Dx}, θ::SVector{Dp}) → NTuple{Dp, NTuple{Dp, SMatrix{Dx, Dp}}}
+
+Third derivatives: ∂³f/∂θ_p∂θ_q∂θ_r for all p, q, r.
+
+Returns Dp tuples (one per p), each containing Dp matrices (one per q).
+Entry [i, r] of matrix (p, q) is ∂³f_i/(∂θ_p ∂θ_q ∂θ_r).
+
+These are used in observed Hessian RHMC for computing ∂(f_θθ)/∂θ.
+"""
+function D3f_θθθ end
+
+# =============================================================================
 # Observation Interface
 # =============================================================================
 
@@ -161,6 +215,34 @@ Derivatives of state Jacobian w.r.t. parameters: ∂(Dη_x)/∂θ_p for p = 1, .
 Returns Dp matrices, each Dy × Dx.
 """
 function DDη_x_θ end
+
+# =============================================================================
+# Third-Order Observation Derivatives (for Observed Hessian RHMC)
+# =============================================================================
+
+"""
+    D3η_xxx(model, x::SVector{Dx}, θ::SVector{Dp}) → NTuple{Dx, NTuple{Dx, SMatrix{Dy, Dx}}}
+
+Third derivatives of observation natural parameter w.r.t. state: ∂³η/∂x_c∂x_d∂x_j.
+
+Returns Dx tuples (one per input component c), each containing Dx matrices (one per d).
+Entry [m, j] of matrix (c, d) is ∂³η_m/(∂x_c ∂x_d ∂x_j).
+
+For linear observation functions (η linear in x), this is all zeros.
+"""
+function D3η_xxx end
+
+"""
+    D3η_xxθ(model, x::SVector{Dx}, θ::SVector{Dp}) → NTuple{Dx, NTuple{Dx, SMatrix{Dy, Dp}}}
+
+Third derivatives: ∂³η/∂x_c∂x_d∂θ_p for all c, d, p.
+
+Returns Dx tuples (one per input component c), each containing Dx matrices (one per d).
+Entry [m, p] of matrix (c, d) is ∂³η_m/(∂x_c ∂x_d ∂θ_p).
+
+For observation functions that are linear in x and θ, this is all zeros.
+"""
+function D3η_xxθ end
 
 # =============================================================================
 # Configuration Methods

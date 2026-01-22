@@ -207,6 +207,114 @@ function DDf_x_θ(model::VanDerPolModel{T}, x::SVector{2,T}, θ::SVector{1,T}) w
 end
 
 # =============================================================================
+# Third-Order Dynamics Derivatives (for Observed Hessian RHMC)
+# =============================================================================
+
+"""
+Third derivatives: ∂³f/∂x_c∂x_d∂x_j for all c, d, j.
+
+D3f_xxx[c][d] = ∂(D2f_xx[d])/∂x_c
+
+From D2f_xx:
+    D2f_xx[1] = [[0, 0], [-2δt·μ·v, -2δt·μ·u]]
+    D2f_xx[2] = [[0, 0], [-2δt·μ·u, 0]]
+
+Third derivatives:
+    ∂D2f_xx[1]/∂u = [[0, 0], [0, -2δt·μ]]
+    ∂D2f_xx[1]/∂v = [[0, 0], [-2δt·μ, 0]]
+    ∂D2f_xx[2]/∂u = [[0, 0], [-2δt·μ, 0]]
+    ∂D2f_xx[2]/∂v = [[0, 0], [0, 0]]
+"""
+function D3f_xxx(model::VanDerPolModel{T}, x::SVector{2,T}, θ::SVector{1,T}) where {T}
+    μ = exp(θ[1])
+    δt = model.δt
+    Z = @SMatrix zeros(T, 2, 2)
+
+    # c=1 (∂/∂u): derivatives of D2f_xx w.r.t. u
+    D3_u_1 = @SMatrix [zero(T) zero(T); zero(T) -2*δt*μ]  # ∂D2f_xx[1]/∂u
+    D3_u_2 = @SMatrix [zero(T) zero(T); -2*δt*μ zero(T)]  # ∂D2f_xx[2]/∂u
+
+    # c=2 (∂/∂v): derivatives of D2f_xx w.r.t. v
+    D3_v_1 = @SMatrix [zero(T) zero(T); -2*δt*μ zero(T)]  # ∂D2f_xx[1]/∂v
+    D3_v_2 = Z  # ∂D2f_xx[2]/∂v
+
+    return ((D3_u_1, D3_u_2), (D3_v_1, D3_v_2))
+end
+
+"""
+Third derivatives: ∂³f/∂x_c∂x_d∂θ for all c, d.
+
+D3f_xxθ[c][d] = ∂(D2f_xθ[d])/∂x_c
+
+From D2f_xθ:
+    D2f_xθ[1] = [[0], [-2δt·μ·u·v]]
+    D2f_xθ[2] = [[0], [δt·μ(1-u²)]]
+
+Third derivatives:
+    ∂D2f_xθ[1]/∂u = [[0], [-2δt·μ·v]]
+    ∂D2f_xθ[1]/∂v = [[0], [-2δt·μ·u]]
+    ∂D2f_xθ[2]/∂u = [[0], [-2δt·μ·u]]
+    ∂D2f_xθ[2]/∂v = [[0], [0]]
+"""
+function D3f_xxθ(model::VanDerPolModel{T}, x::SVector{2,T}, θ::SVector{1,T}) where {T}
+    u, v = x
+    μ = exp(θ[1])
+    δt = model.δt
+    Z = @SMatrix zeros(T, 2, 1)
+
+    # c=1 (∂/∂u): derivatives of D2f_xθ w.r.t. u
+    D3_u_1 = @SMatrix [zero(T); -2*δt*μ*v]  # ∂D2f_xθ[1]/∂u
+    D3_u_2 = @SMatrix [zero(T); -2*δt*μ*u]  # ∂D2f_xθ[2]/∂u
+
+    # c=2 (∂/∂v): derivatives of D2f_xθ w.r.t. v
+    D3_v_1 = @SMatrix [zero(T); -2*δt*μ*u]  # ∂D2f_xθ[1]/∂v
+    D3_v_2 = Z  # ∂D2f_xθ[2]/∂v
+
+    return ((D3_u_1, D3_u_2), (D3_v_1, D3_v_2))
+end
+
+"""
+Third derivatives: ∂³f/∂x_c∂θ_p∂θ_q for all c, p, q.
+
+D3f_xθθ[c][p] = ∂(D2f_θθ[p])/∂x_c
+
+From D2f_θθ (for log parameterization, D2f_θθ[1] = Df_θ):
+    D2f_θθ[1] = [[0], [δt·μ(1-u²)v]]
+
+Third derivatives:
+    ∂D2f_θθ[1]/∂u = [[0], [-2δt·μ·u·v]]
+    ∂D2f_θθ[1]/∂v = [[0], [δt·μ(1-u²)]]
+"""
+function D3f_xθθ(model::VanDerPolModel{T}, x::SVector{2,T}, θ::SVector{1,T}) where {T}
+    u, v = x
+    μ = exp(θ[1])
+    δt = model.δt
+
+    # c=1 (∂/∂u): derivative of D2f_θθ[1] w.r.t. u
+    D3_u_1 = @SMatrix [zero(T); -2*δt*μ*u*v]
+
+    # c=2 (∂/∂v): derivative of D2f_θθ[1] w.r.t. v
+    D3_v_1 = @SMatrix [zero(T); δt*μ*(1-u^2)]
+
+    return ((D3_u_1,), (D3_v_1,))  # Each inner tuple has Dp=1 elements
+end
+
+"""
+Third derivatives: ∂³f/∂θ_p∂θ_q∂θ_r for all p, q, r.
+
+D3f_θθθ[p][q] = ∂(D2f_θθ[q])/∂θ_p
+
+For log parameterization, ∂/∂θ of any μ-containing term multiplies by μ:
+    D2f_θθ[1] = Df_θ = [[0], [δt·μ(1-u²)v]]
+    ∂D2f_θθ[1]/∂θ = [[0], [δt·μ(1-u²)v]] = Df_θ (same value)
+"""
+function D3f_θθθ(model::VanDerPolModel{T}, x::SVector{2,T}, θ::SVector{1,T}) where {T}
+    # For log parameterization, D3f_θθθ = D2f_θθ = Df_θ
+    df_dθ = Df_θ(model, x, θ)
+    return ((df_dθ,),)  # Dp=1, so single nested tuple
+end
+
+# =============================================================================
 # Observations: η(x, θ) - partial linear observation of u
 # =============================================================================
 
@@ -263,4 +371,24 @@ Derivatives of state Jacobian w.r.t. parameters. All zeros since Dη_x doesn't d
 """
 function DDη_x_θ(model::VanDerPolModel{T}, x::SVector{2,T}, θ::SVector{1,T}) where {T}
     return (@SMatrix(zeros(T, 1, 2)),)  # 1-tuple since Dp = 1
+end
+
+# =============================================================================
+# Third-Order Observation Derivatives (all zeros since η is linear)
+# =============================================================================
+
+"""
+Third derivatives of observation: ∂³η/∂x_c∂x_d∂x_j. All zeros since η = u is linear.
+"""
+function D3η_xxx(model::VanDerPolModel{T}, x::SVector{2,T}, θ::SVector{1,T}) where {T}
+    Z = @SMatrix zeros(T, 1, 2)
+    return ((Z, Z), (Z, Z))  # Dx × Dx nested tuples of Dy × Dx matrices
+end
+
+"""
+Third derivatives of observation: ∂³η/∂x_c∂x_d∂θ_p. All zeros since η doesn't depend on θ.
+"""
+function D3η_xxθ(model::VanDerPolModel{T}, x::SVector{2,T}, θ::SVector{1,T}) where {T}
+    Z = @SMatrix zeros(T, 1, 1)
+    return ((Z, Z), (Z, Z))  # Dx × Dx nested tuples of Dy × Dp matrices
 end
