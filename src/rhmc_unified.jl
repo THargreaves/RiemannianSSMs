@@ -236,7 +236,7 @@ function calc_G(
     z::BorderedBlockVector{T,Dx,Dp},
     model::StateSpaceModel{Dx,Dy,Dp},
     prior_prec::SVector{Dp,T};
-    λ=T(1e-7),
+    λ=T(1e-5),
     obs_indices=nothing,
 ) where {T,Dx,Dy,Dp}
     K = length(z.state_blocks)
